@@ -1,6 +1,10 @@
 # IPTV VLC Launcher
 
-A lightweight, menu-driven PowerShell and Batch launcher for streaming global IPTV playlists directly in VLC Media Player, categorized by region, language, and genre.
+<p align="center">
+  <img src="assets/release_v0.0.3.png" width="600" alt="IPTV VLC Launcher v0.0.3">
+</p>
+
+A lightweight, menu-driven PowerShell, Batch, and Bash launcher for streaming global IPTV playlists directly in VLC Media Player, categorized by region, language, and genre.
 
 ## Why and What it is Created For
 
@@ -10,18 +14,25 @@ A lightweight, menu-driven PowerShell and Batch launcher for streaming global IP
 ## How to Use It
 
 ### Prerequisites
-- **VLC Media Player** must be installed on your Windows machine in the default location (`C:\Program Files\VideoLAN\VLC\` or `C:\Program Files (x86)\VideoLAN\VLC\`).
+- **VLC Media Player** must be installed on your machine.
+  - **Windows**: Default path `C:\Program Files\VideoLAN\VLC\` or `C:\Program Files (x86)\VideoLAN\VLC\`.
+  - **Linux/macOS**: VLC must be available via `vlc` in your `PATH`, or installed at `/usr/bin/vlc` or `/Applications/VLC.app`.
 
 ### Running the Launcher
-You can use either the PowerShell or the Batch version:
+Choose the script that matches your operating system:
 
-1. **PowerShell Edition `IPTV_Launcher.ps1` (Recommended)**: 
-   - Open PowerShell and execute the script: `.\IPTV_Launcher.ps1`
+1. **PowerShell Edition `IPTV_Launcher.ps1` (Windows — Recommended)**:
+   - Open PowerShell and execute: `.\IPTV_Launcher.ps1`
    - Alternatively, right-click the file and select "Run with PowerShell".
-   - This version features a modern, multi-colored interface that is easier to read.
+   - Features a modern, multi-colored interface.
 
-2. **Batch Edition `IPTV_Launcher.bat`**:
+2. **Batch Edition `IPTV_Launcher.bat` (Windows)**:
    - Simply double-click on `IPTV_Launcher.bat` to run.
+
+3. **Bash Edition `IPTV_Launcher.sh` (Linux / macOS)**:
+   - Make it executable first: `chmod +x IPTV_Launcher.sh`
+   - Then run it: `./IPTV_Launcher.sh`
+   - Features the same colored terminal output as the PowerShell version.
 
 ### Selecting a Stream
 - Once the script runs, you'll see a menu offering choices numbered `1` through `25`.
@@ -32,7 +43,7 @@ You can use either the PowerShell or the Batch version:
 
 ## Code Functionality Documentation
 
-Both the PowerShell (`.ps1`) and Batch (`.bat`) scripts follow a similar architecture and functional flow:
+All three scripts — PowerShell (`.ps1`), Batch (`.bat`), and Bash (`.sh`) — follow the same architecture and functional flow:
 
 1. **VLC Auto-Detection**:
    The scripts first check for the presence of the VLC executable (`vlc.exe`) at standard 64-bit and 32-bit installation paths.

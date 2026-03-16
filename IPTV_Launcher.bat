@@ -58,8 +58,7 @@ set CAT12=https://iptv-org.github.io/iptv/categories/music.m3u
 set REG1=https://iptv-org.github.io/iptv/regions/amer.m3u
 set REG2=https://iptv-org.github.io/iptv/regions/cenamer.m3u
 set REG3=https://iptv-org.github.io/iptv/regions/noram.m3u
-set REG4=https://iptv-org.github.io/iptv/regions/nam.m3u
-set REG5=https://iptv-org.github.io/iptv/regions/southam.m3u
+set REG4=https://iptv-org.github.io/iptv/regions/southam.m3u
 
 :: --------------------------------------------------
 :MENU
@@ -107,7 +106,7 @@ if "%opt%"=="9"  "%VLC%" "%ENG%" & goto MENU
 if "%opt%"=="10" "%VLC%" "%REG1%" & goto MENU
 if "%opt%"=="11" "%VLC%" "%REG2%" & goto MENU
 if "%opt%"=="12" "%VLC%" "%REG3%" & goto MENU
-if "%opt%"=="13" "%VLC%" "%REG5%" & goto MENU
+if "%opt%"=="13" "%VLC%" "%REG4%" & goto MENU
 
 if "%opt%"=="14" "%VLC%" "%CAT1%"  & goto MENU
 if "%opt%"=="15" "%VLC%" "%CAT2%"  & goto MENU
@@ -124,6 +123,6 @@ if "%opt%"=="25" "%VLC%" "%CAT12%" & goto MENU
 
 if "%opt%"=="0" exit /b
 
-echo Invalid option.
-pause
+echo Invalid option. Please try again.
+timeout /t 2 >nul
 goto MENU

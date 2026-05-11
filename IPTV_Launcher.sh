@@ -1,6 +1,9 @@
 #!/bin/bash
-
 # IPTV VLC Launcher - Bash Edition
+
+# --- CONFIGURATION ---
+FUZZY_THRESHOLD=0.7
+# ---------------------
 
 # Detect VLC
 if command -v vlc &>/dev/null; then
@@ -10,32 +13,32 @@ elif [ -f "/usr/bin/vlc" ]; then
 elif [ -f "/Applications/VLC.app/Contents/MacOS/VLC" ]; then
     VLC="/Applications/VLC.app/Contents/MacOS/VLC"
 else
-    echo "X VLC not found."
-    read -r -p "Press Enter to exit..."
+    echo "X VLC not found. Please install VLC Media Player."
     exit 1
 fi
 
-# URL Map (indexed by number)
+# Resolve the directory of this script regardless of how it's called
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SEARCH_SCRIPT="$SCRIPT_DIR/iptv_search.py"
+
+# URL Map
 declare -A URLS
 # INDEX
 URLS[1]="https://iptv-org.github.io/iptv/index.m3u"
 URLS[2]="https://iptv-org.github.io/iptv/index.category.m3u"
 URLS[3]="https://iptv-org.github.io/iptv/index.language.m3u"
 URLS[4]="https://iptv-org.github.io/iptv/index.country.m3u"
-
 # Countries / Languages
 URLS[5]="https://iptv-org.github.io/iptv/countries/in.m3u"
 URLS[6]="https://iptv-org.github.io/iptv/countries/us.m3u"
 URLS[7]="https://iptv-org.github.io/iptv/languages/tam.m3u"
 URLS[8]="https://iptv-org.github.io/iptv/languages/tel.m3u"
 URLS[9]="https://iptv-org.github.io/iptv/languages/eng.m3u"
-
 # Regions
 URLS[10]="https://iptv-org.github.io/iptv/regions/amer.m3u"
 URLS[11]="https://iptv-org.github.io/iptv/regions/cenamer.m3u"
 URLS[12]="https://iptv-org.github.io/iptv/regions/noram.m3u"
 URLS[13]="https://iptv-org.github.io/iptv/regions/southam.m3u"
-
 # Categories
 URLS[14]="https://iptv-org.github.io/iptv/categories/animation.m3u"
 URLS[15]="https://iptv-org.github.io/iptv/categories/comedy.m3u"
@@ -55,49 +58,99 @@ show_menu() {
     echo -e "\e[36m========================================================================\e[0m"
     echo -e "\e[32m                         IPTV VLC Launcher                             \e[0m"
     echo -e "\e[36m========================================================================\e[0m"
-    echo -e "\e[33mVLC:\e[0m $VLC"
+    echo -e "\e[33mVLC:\e[0m $VLC   \e[33mSensitivity:\e[0m $FUZZY_THRESHOLD"
     echo -e "\e[36m------------------------------------------------------------------------\e[0m"
     echo ""
     echo -e "\e[35m  INDEX / COUNTRIES / REGIONS          CATEGORIES\e[0m"
     echo -e "\e[90m  ------------------------------------ ---------------------------\e[0m"
-    echo -e "\e[33m  1.\e[0m  All Channels (Master)            \e[33m14.\e[0m Animation"
-    echo -e "\e[33m  2.\e[0m  Categories (Index)               \e[33m15.\e[0m Comedy"
-    echo -e "\e[33m  3.\e[0m  Languages (Index)                \e[33m16.\e[0m Cooking"
-    echo -e "\e[33m  4.\e[0m  Countries (Index)                \e[33m17.\e[0m Documentary"
+    echo -e "\e[33m  1.\e[0m All Channels (Master)             \e[33m14.\e[0m Animation"
+    echo -e "\e[33m  2.\e[0m Categories (Index)                \e[33m15.\e[0m Comedy"
+    echo -e "\e[33m  3.\e[0m Languages (Index)                 \e[33m16.\e[0m Cooking"
+    echo -e "\e[33m  4.\e[0m Countries (Index)                 \e[33m17.\e[0m Documentary"
     echo -e "                                       \e[33m18.\e[0m Education"
-    echo -e "\e[33m  5.\e[0m  India                            \e[33m19.\e[0m Entertainment"
-    echo -e "\e[33m  6.\e[0m  United States                    \e[33m20.\e[0m Movies"
-    echo -e "\e[33m  7.\e[0m  Tamil                            \e[33m21.\e[0m News"
-    echo -e "\e[33m  8.\e[0m  Telugu                           \e[33m22.\e[0m Science"
-    echo -e "\e[33m  9.\e[0m  English                          \e[33m23.\e[0m Series"
+    echo -e "\e[33m  5.\e[0m India                             \e[33m19.\e[0m Entertainment"
+    echo -e "\e[33m  6.\e[0m United States                     \e[33m20.\e[0m Movies"
+    echo -e "\e[33m  7.\e[0m Tamil                             \e[33m21.\e[0m News"
+    echo -e "\e[33m  8.\e[0m Telugu                            \e[33m22.\e[0m Science"
+    echo -e "\e[33m  9.\e[0m English                           \e[33m23.\e[0m Series"
     echo -e "                                       \e[33m24.\e[0m Sports"
     echo -e "\e[33m 10.\e[0m Americas (All)                    \e[33m25.\e[0m Music"
     echo -e "\e[33m 11.\e[0m Central America"
     echo -e "\e[33m 12.\e[0m North America"
     echo -e "\e[33m 13.\e[0m South America"
     echo ""
-    echo -e "\e[31m  0.\e[0m  Exit"
+    echo -e "\e[32m  S.\e[0m SEARCH CHANNEL                   \e[32m  T.\e[0m ADJUST SENSITIVITY"
+    echo -e "\e[31m  0.\e[0m Exit"
     echo ""
     echo -e "\e[36m========================================================================\e[0m"
 }
 
-# Main loop
+do_search() {
+    local python_cmd
+    if command -v python3 &>/dev/null; then
+        python_cmd="python3"
+    elif command -v python &>/dev/null; then
+        python_cmd="python"
+    else
+        echo -e "\e[31mX Python not found. Please install Python 3 to use search.\e[0m"
+        read -r -p "Press Enter to continue..."
+        return
+    fi
+
+    if [ ! -f "$SEARCH_SCRIPT" ]; then
+        echo -e "\e[31mX iptv_search.py not found in: $SCRIPT_DIR\e[0m"
+        read -r -p "Press Enter to continue..."
+        return
+    fi
+
+    local result_file
+    result_file=$(mktemp)
+    # Run Python interactively; it writes the selected URL to the temp file
+    $python_cmd "$SEARCH_SCRIPT" --threshold "$FUZZY_THRESHOLD" --output-file "$result_file"
+
+    local url
+    url=$(cat "$result_file" 2>/dev/null)
+    rm -f "$result_file"
+
+    if [ -n "$url" ]; then
+        echo -e "\e[32mLaunching VLC...\e[0m"
+        "$VLC" "$url" &
+        sleep 1
+    fi
+}
+
 while true; do
     show_menu
     read -r -p "Select option: " choice
 
-    if [ "$choice" = "0" ]; then
-        break
-    fi
+    # Trim whitespace
+    choice="${choice//[[:space:]]/}"
+    [ -z "$choice" ] && continue
 
-    if [[ -n "${URLS[$choice]}" ]]; then
-        echo -e "\n\e[32mLaunching VLC with selected stream...\e[0m"
-        "$VLC" "${URLS[$choice]}" &
-        sleep 1
-    else
-        echo -e "\n\e[31mInvalid option. Please try again.\e[0m"
-        sleep 2
-    fi
+    case "${choice,,}" in  # lowercase for case-insensitive match
+        0) echo -e "\e[32mGoodbye!\e[0m"; break ;;
+        s) do_search ;;
+        t)
+            read -r -p "Enter new sensitivity (0.1 - 1.0): " t
+            # Validate: must be a number between 0.1 and 1.0
+            if [[ "$t" =~ ^0?\.[0-9]+$|^1(\.0+)?$ ]]; then
+                FUZZY_THRESHOLD=$t
+                echo -e "\e[32mSensitivity updated to $FUZZY_THRESHOLD\e[0m"
+                sleep 1
+            else
+                echo -e "\e[31mInvalid value. Must be between 0.1 and 1.0 (e.g. 0.5)\e[0m"
+                sleep 2
+            fi
+            ;;
+        *)
+            if [[ -n "${URLS[$choice]}" ]]; then
+                echo -e "\e[32mLaunching VLC with selected stream...\e[0m"
+                "$VLC" "${URLS[$choice]}" &
+                sleep 1
+            else
+                echo -e "\e[31mInvalid option. Please try again.\e[0m"
+                sleep 1
+            fi
+            ;;
+    esac
 done
-
-echo -e "\n\e[32mGoodbye!\e[0m"

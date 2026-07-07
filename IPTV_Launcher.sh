@@ -3,6 +3,7 @@
 
 # --- CONFIGURATION ---
 FUZZY_THRESHOLD=0.7
+SCRIPT_VERSION="0.1.0"
 # ---------------------
 
 # Detect VLC
@@ -21,42 +22,60 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SEARCH_SCRIPT="$SCRIPT_DIR/iptv_search.py"
 
-# URL Map
-declare -A URLS
-# INDEX
-URLS[1]="https://iptv-org.github.io/iptv/index.m3u"
-URLS[2]="https://iptv-org.github.io/iptv/index.category.m3u"
-URLS[3]="https://iptv-org.github.io/iptv/index.language.m3u"
-URLS[4]="https://iptv-org.github.io/iptv/index.country.m3u"
-# Countries / Languages
-URLS[5]="https://iptv-org.github.io/iptv/countries/in.m3u"
-URLS[6]="https://iptv-org.github.io/iptv/countries/us.m3u"
-URLS[7]="https://iptv-org.github.io/iptv/languages/tam.m3u"
-URLS[8]="https://iptv-org.github.io/iptv/languages/tel.m3u"
-URLS[9]="https://iptv-org.github.io/iptv/languages/eng.m3u"
-# Regions
-URLS[10]="https://iptv-org.github.io/iptv/regions/amer.m3u"
-URLS[11]="https://iptv-org.github.io/iptv/regions/cenamer.m3u"
-URLS[12]="https://iptv-org.github.io/iptv/regions/noram.m3u"
-URLS[13]="https://iptv-org.github.io/iptv/regions/southam.m3u"
-# Categories
-URLS[14]="https://iptv-org.github.io/iptv/categories/animation.m3u"
-URLS[15]="https://iptv-org.github.io/iptv/categories/comedy.m3u"
-URLS[16]="https://iptv-org.github.io/iptv/categories/cooking.m3u"
-URLS[17]="https://iptv-org.github.io/iptv/categories/documentary.m3u"
-URLS[18]="https://iptv-org.github.io/iptv/categories/education.m3u"
-URLS[19]="https://iptv-org.github.io/iptv/categories/entertainment.m3u"
-URLS[20]="https://iptv-org.github.io/iptv/categories/movies.m3u"
-URLS[21]="https://iptv-org.github.io/iptv/categories/news.m3u"
-URLS[22]="https://iptv-org.github.io/iptv/categories/science.m3u"
-URLS[23]="https://iptv-org.github.io/iptv/categories/series.m3u"
-URLS[24]="https://iptv-org.github.io/iptv/categories/sports.m3u"
-URLS[25]="https://iptv-org.github.io/iptv/categories/music.m3u"
+# Quick search: if a query was passed as argument, skip menu
+if [ $# -gt 0 ]; then
+    query="$*"
+    if ! command -v python3 &>/dev/null && ! command -v python &>/dev/null; then
+        echo -e "\e[31mX Python not found.\e[0m"
+        exit 1
+    fi
+    python_cmd=$(command -v python3 || command -v python)
+    result_file=$(mktemp)
+    $python_cmd "$SEARCH_SCRIPT" --query "$query" --threshold "$FUZZY_THRESHOLD" --output-file "$result_file"
+    url=$(cat "$result_file" 2>/dev/null)
+    rm -f "$result_file"
+    if [ -n "$url" ]; then
+        "$VLC" "$url" &
+    fi
+    exit 0
+fi
+
+# URL Map (works on Bash 3.2+ without associative arrays)
+get_url() {
+    case "$1" in
+        1)  echo "https://iptv-org.github.io/iptv/index.m3u" ;;
+        2)  echo "https://iptv-org.github.io/iptv/index.category.m3u" ;;
+        3)  echo "https://iptv-org.github.io/iptv/index.language.m3u" ;;
+        4)  echo "https://iptv-org.github.io/iptv/index.country.m3u" ;;
+        5)  echo "https://iptv-org.github.io/iptv/countries/in.m3u" ;;
+        6)  echo "https://iptv-org.github.io/iptv/countries/us.m3u" ;;
+        7)  echo "https://iptv-org.github.io/iptv/languages/tam.m3u" ;;
+        8)  echo "https://iptv-org.github.io/iptv/languages/tel.m3u" ;;
+        9)  echo "https://iptv-org.github.io/iptv/languages/eng.m3u" ;;
+        10) echo "https://iptv-org.github.io/iptv/regions/amer.m3u" ;;
+        11) echo "https://iptv-org.github.io/iptv/regions/cenamer.m3u" ;;
+        12) echo "https://iptv-org.github.io/iptv/regions/noram.m3u" ;;
+        13) echo "https://iptv-org.github.io/iptv/regions/southam.m3u" ;;
+        14) echo "https://iptv-org.github.io/iptv/categories/animation.m3u" ;;
+        15) echo "https://iptv-org.github.io/iptv/categories/comedy.m3u" ;;
+        16) echo "https://iptv-org.github.io/iptv/categories/cooking.m3u" ;;
+        17) echo "https://iptv-org.github.io/iptv/categories/documentary.m3u" ;;
+        18) echo "https://iptv-org.github.io/iptv/categories/education.m3u" ;;
+        19) echo "https://iptv-org.github.io/iptv/categories/entertainment.m3u" ;;
+        20) echo "https://iptv-org.github.io/iptv/categories/movies.m3u" ;;
+        21) echo "https://iptv-org.github.io/iptv/categories/news.m3u" ;;
+        22) echo "https://iptv-org.github.io/iptv/categories/science.m3u" ;;
+        23) echo "https://iptv-org.github.io/iptv/categories/series.m3u" ;;
+        24) echo "https://iptv-org.github.io/iptv/categories/sports.m3u" ;;
+        25) echo "https://iptv-org.github.io/iptv/categories/music.m3u" ;;
+        *)  return 1 ;;
+    esac
+}
 
 show_menu() {
     clear
     echo -e "\e[36m========================================================================\e[0m"
-    echo -e "\e[32m                         IPTV VLC Launcher                             \e[0m"
+    echo -e "\e[32m                     IPTV VLC Launcher v$SCRIPT_VERSION\e[0m"
     echo -e "\e[36m========================================================================\e[0m"
     echo -e "\e[33mVLC:\e[0m $VLC   \e[33mSensitivity:\e[0m $FUZZY_THRESHOLD"
     echo -e "\e[36m------------------------------------------------------------------------\e[0m"
@@ -143,9 +162,10 @@ while true; do
             fi
             ;;
         *)
-            if [[ -n "${URLS[$choice]}" ]]; then
+            url=$(get_url "$choice")
+            if [ -n "$url" ]; then
                 echo -e "\e[32mLaunching VLC with selected stream...\e[0m"
-                "$VLC" "${URLS[$choice]}" &
+                "$VLC" "$url" &
                 sleep 1
             else
                 echo -e "\e[31mInvalid option. Please try again.\e[0m"

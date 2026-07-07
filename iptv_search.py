@@ -14,31 +14,70 @@ except ImportError:
 MASTER_URL = "https://iptv-org.github.io/iptv/index.m3u"
 CACHE_FILE = os.path.join(tempfile.gettempdir(), "iptv_master_cache.m3u")
 CACHE_EXPIRY = 3600 * 24  # 24 hours
+DOWNLOAD_TIMEOUT = 60  # seconds
+SCRIPT_VERSION = "0.1.0"
 
 # Compatibility for Python 2/3 input
 if sys.version_info[0] < 3:
     input = raw_input
 
-def download_m3u():
+def _read_cache():
+    """Read and return lines from cache if it exists, else None."""
+    if not os.path.exists(CACHE_FILE):
+        return None
+    try:
+        with open(CACHE_FILE, 'r', encoding='utf-8', errors='ignore') as f:
+            return f.readlines()
+    except OSError:
+        return None
+
+
+def _cache_age_hours():
+    """Return cache age in hours, or None if no cache."""
+    if not os.path.exists(CACHE_FILE):
+        return None
+    age = time.time() - os.path.getmtime(CACHE_FILE)
+    return int(age / 3600)
+
+
+def _cache_timestamp():
+    """Return cache modification timestamp as string, or None."""
+    if not os.path.exists(CACHE_FILE):
+        return None
+    return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(os.path.getmtime(CACHE_FILE)))
+
+
+def download_m3u(force_refresh=False):
     """Downloads the master M3U list and caches it to disk for 24 hours."""
-    if os.path.exists(CACHE_FILE):
-        if (time.time() - os.path.getmtime(CACHE_FILE)) < CACHE_EXPIRY:
-            try:
-                with open(CACHE_FILE, 'r', encoding='utf-8', errors='ignore') as f:
-                    return f.readlines()
-            except OSError:
-                pass  # Cache unreadable, fall through to re-download
+    if force_refresh and os.path.exists(CACHE_FILE):
+        os.remove(CACHE_FILE)
+
+    cache_age = _cache_age_hours()
+    if cache_age is not None and cache_age * 3600 < CACHE_EXPIRY:
+        lines = _read_cache()
+        if lines:
+            cache_time = _cache_timestamp()
+            print(f"[i] Using cached playlist ({cache_age}h old, from {cache_time})")
+            return lines
 
     print("\n[!] Downloading master channel list (30,000+ channels)...")
+    start_time = time.time()
     try:
         req = urllib_req.Request(MASTER_URL, headers={"User-Agent": "iptv-vlc-launcher/1.0"})
-        with urllib_req.urlopen(req, timeout=30) as response:
+        with urllib_req.urlopen(req, timeout=DOWNLOAD_TIMEOUT) as response:
             content = response.read().decode('utf-8', errors='ignore')
+        elapsed = time.time() - start_time
+        print(f"[i] Download completed in {elapsed:.1f}s")
         with open(CACHE_FILE, 'w', encoding='utf-8') as f:
             f.write(content)
-        return content.splitlines(keepends=True)
+        return content.splitlines(True)
     except Exception as e:
-        print(f"X Failed to download playlist: {e}", flush=True)
+        print(f"X Download failed: {e}", flush=True)
+        if cache_age is not None:
+            lines = _read_cache()
+            if lines:
+                print(f"[!] Falling back to cached playlist ({cache_age}h old)")
+                return lines
         return []
 
 
@@ -112,6 +151,10 @@ def main():
         "--limit", type=int, default=50,
         help="Maximum number of results to display (default: 50)"
     )
+    parser.add_argument(
+        "--force-refresh", action="store_true",
+        help="Force fresh download ignoring cache"
+    )
     args = parser.parse_args()
 
     # Clamp threshold to valid range
@@ -128,7 +171,7 @@ def main():
         print("X No search query provided.")
         return
 
-    lines = download_m3u()
+    lines = download_m3u(force_refresh=args.force_refresh)
     if not lines:
         return
 
@@ -136,6 +179,7 @@ def main():
     if not channels:
         print("X Could not parse any channels from the playlist.")
         return
+    print(f"[i] Loaded {len(channels)} channels")
 
     matches = fuzzy_search(args.query, channels, args.threshold, args.limit)
 

@@ -1,9 +1,45 @@
 # IPTV VLC Launcher - PowerShell Edition
 $Host.UI.RawUI.WindowTitle = "IPTV VLC Launcher"
 
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+
 # --- CONFIGURATION ---
 $FuzzyThreshold = 0.7
+$ScriptVersion = "0.1.0"
 # ---------------------
+
+# Quick search: if a query was passed as argument, skip menu
+if ($args.Count -gt 0) {
+    $query = $args -join " "
+    # Detect VLC
+    $vlc = if (Test-Path "C:\Program Files\VideoLAN\VLC\vlc.exe") { "C:\Program Files\VideoLAN\VLC\vlc.exe" }
+    elseif (Test-Path "C:\Program Files (x86)\VideoLAN\VLC\vlc.exe") { "C:\Program Files (x86)\VideoLAN\VLC\vlc.exe" }
+    else { Write-Host "X VLC not found." -ForegroundColor Red; exit 1 }
+    # Detect Python properly (bypass MS Store stub)
+    $pythonCmd = $null
+    foreach ($cmd in "python3", "python") {
+        $found = Get-Command $cmd -ErrorAction SilentlyContinue
+        if ($found) {
+            try { & $found.Source --version 2>$null } catch { }
+            if ($LASTEXITCODE -eq 0) { $pythonCmd = $found; break }
+        }
+    }
+    if (-not $pythonCmd) { Write-Host "X Python not found." -ForegroundColor Red; exit 1 }
+    $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+    $SearchScript = Join-Path $ScriptDir "iptv_search.py"
+    $resultFile = [System.IO.Path]::GetTempFileName()
+    $tString = $FuzzyThreshold.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    try {
+        & $pythonCmd.Source "$SearchScript" --query "$query" --threshold $tString --output-file "$resultFile"
+        if (Test-Path $resultFile) {
+            $url = (Get-Content $resultFile -Raw)
+            if ($url) { Start-Process -FilePath "$vlc" -ArgumentList "`"$($url.Trim())`"" }
+        }
+    } finally {
+        if (Test-Path $resultFile) { Remove-Item $resultFile -ErrorAction SilentlyContinue }
+    }
+    exit 0
+}
 
 # Detect VLC
 $vlc = if (Test-Path "C:\Program Files\VideoLAN\VLC\vlc.exe") { "C:\Program Files\VideoLAN\VLC\vlc.exe" }
@@ -113,7 +149,7 @@ function Invoke-Search {
 function Show-Menu {
     Clear-Host
     Write-Host "========================================================================" -ForegroundColor Cyan
-    Write-Host "                          IPTV VLC Launcher                             " -ForegroundColor Green
+    Write-Host "                     IPTV VLC Launcher v$ScriptVersion" -ForegroundColor Green
     Write-Host "========================================================================" -ForegroundColor Cyan
     Write-Host "VLC: $vlc   Sensitivity: $FuzzyThreshold" -ForegroundColor Yellow
     Write-Host "------------------------------------------------------------------------" -ForegroundColor Cyan

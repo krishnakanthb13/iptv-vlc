@@ -2,11 +2,19 @@
 setlocal EnableExtensions EnableDelayedExpansion
 title IPTV VLC Launcher
 color 0A
+set "SCRIPT_VERSION=0.1.0"
 
 :: --------------------------------------------------
 :: CONFIGURATION
 :: --------------------------------------------------
 set "FUZZY_THRESHOLD=0.7"
+
+:: --------------------------------------------------
+:: Quick search: if a query was passed as argument, skip menu
+:: --------------------------------------------------
+if "%~1" NEQ "" (
+    goto QUICK_SEARCH
+)
 
 :: --------------------------------------------------
 :: Detect VLC
@@ -69,7 +77,7 @@ set REG4=https://iptv-org.github.io/iptv/regions/southam.m3u
 :MENU
 cls
 echo ========================================================================
-echo                          IPTV VLC Launcher
+echo                     IPTV VLC Launcher v%SCRIPT_VERSION%
 echo ========================================================================
 echo VLC: %VLC%
 echo Sensitivity: %FUZZY_THRESHOLD%
@@ -94,7 +102,7 @@ echo  12. North America
 echo  13. South America
 echo.
 echo   S.  SEARCH CHANNEL                   T.  ADJUST SENSITIVITY
-echo   0.  Exit
+echo   H.  HELP / ABOUT                      0.  Exit
 echo.
 echo ========================================================================
 set "opt="
@@ -103,6 +111,7 @@ if not defined opt goto MENU
 
 if /i "%opt%"=="S" goto SEARCH
 if /i "%opt%"=="T" goto SENSITIVITY
+if /i "%opt%"=="H" goto HELP
 if "%opt%"=="0" exit /b 0
 
 if "%opt%"=="1"  start "" "%VLC%" "%IDX1%" & goto MENU
@@ -139,8 +148,47 @@ timeout /t 2 >nul
 goto MENU
 
 :: --------------------------------------------------
+:QUICK_SEARCH
+:: Ensure VLC is detected (may be reached before main VLC detection)
+if not defined VLC (
+    if exist "C:\Program Files\VideoLAN\VLC\vlc.exe" (
+        set "VLC=C:\Program Files\VideoLAN\VLC\vlc.exe"
+    ) else if exist "C:\Program Files (x86)\VideoLAN\VLC\vlc.exe" (
+        set "VLC=C:\Program Files (x86)\VideoLAN\VLC\vlc.exe"
+    )
+)
+if not defined VLC (
+    echo X VLC not found.
+    exit /b 1
+)
+
+python --version >nul 2>nul
+if %errorlevel% neq 0 (
+    echo X Python not found. Please install Python 3 to use search.
+    pause
+    exit /b 1
+)
+
+set "RESULT_FILE=%TEMP%\iptv_result_%RANDOM%.txt"
+if exist "%RESULT_FILE%" del "%RESULT_FILE%"
+
+python "%~dp0iptv_search.py" --query "%~1" --threshold %FUZZY_THRESHOLD% --output-file "%RESULT_FILE%"
+
+if exist "%RESULT_FILE%" (
+    set /p RESULT_URL=<"%RESULT_FILE%"
+    del "%RESULT_FILE%"
+) else (
+    set "RESULT_URL="
+)
+
+if defined RESULT_URL (
+    start "" "%VLC%" "%RESULT_URL%"
+)
+exit /b 0
+
+:: --------------------------------------------------
 :SEARCH
-where python >nul 2>nul
+python --version >nul 2>nul
 if %errorlevel% neq 0 (
     echo X Python not found. Please install Python 3 to use search.
     pause
@@ -176,14 +224,49 @@ goto MENU
 set "new_t="
 set /p new_t=Enter new sensitivity (0.1 - 1.0): 
 if not defined new_t goto MENU
-:: Basic check: must contain a dot
-echo %new_t% | findstr /r "\." >nul 2>nul
+:: More robust validation
+echo %new_t% | findstr /r "^0\.[0-9][0-9]*$ ^1\.0+$" >nul 2>nul
 if errorlevel 1 (
-    echo Invalid value. Must be a decimal like 0.5
+    echo Invalid value. Must be between 0.1 and 1.0 (e.g. 0.5, 0.75, 1.0)
     timeout /t 2 >nul
     goto MENU
 )
 set "FUZZY_THRESHOLD=%new_t%"
 echo Sensitivity updated to %FUZZY_THRESHOLD%
 timeout /t 1 >nul
+goto MENU
+
+:: --------------------------------------------------
+:HELP
+cls
+echo ========================================================================
+echo                     IPTV VLC Launcher v%SCRIPT_VERSION%
+echo ========================================================================
+echo.
+echo USAGE:
+echo   IPTV_Launcher.bat                   Open interactive menu
+echo   IPTV_Launcher.bat "channel name"    Quick search and launch
+echo.
+echo MENU OPTIONS:
+echo   1-25  Select a channel list to open in VLC
+echo   S     Fuzzy search across all 30,000+ channels
+echo   T     Adjust search sensitivity (0.1 loose - 1.0 exact)
+echo   H     Show this help screen
+echo   0     Exit
+echo.
+echo QUICK SEARCH EXAMPLES:
+echo   IPTV_Launcher.bat "BBC News"
+echo   IPTV_Launcher.bat "ESPN"
+echo   IPTV_Launcher.bat "Discovery"
+echo.
+echo REQUIREMENTS:
+echo   - Python 3.6+ (https://www.python.org/downloads/)
+echo   - VLC Media Player (https://www.videolan.org/)
+echo.
+echo SOURCE:
+echo   https://github.com/user/iptv-vlc
+echo.
+echo ========================================================================
+echo.
+pause
 goto MENU

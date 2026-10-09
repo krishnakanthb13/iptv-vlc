@@ -8,6 +8,25 @@ $FuzzyThreshold = 0.7
 $ScriptVersion = "0.1.12"
 # ---------------------
 
+# Handle flags: --version, -v, --help, -h
+if ($args.Count -eq 1) {
+    if ($args[0] -in @("--version", "-v")) {
+        Write-Host "IPTV VLC Launcher v$ScriptVersion"
+        exit 0
+    }
+    if ($args[0] -in @("--help", "-h")) {
+        Write-Host "IPTV VLC Launcher v$ScriptVersion"
+        Write-Host "Usage: .\IPTV_Launcher.ps1 [OPTIONS] [CHANNEL_QUERY]"
+        Write-Host ""
+        Write-Host "Options:"
+        Write-Host "  -v, --version    Show version number and exit"
+        Write-Host "  -h, --help       Show this help message and exit"
+        Write-Host ""
+        Write-Host "Run without arguments for interactive menu."
+        exit 0
+    }
+}
+
 # Quick search: if a query was passed as argument, skip menu
 if ($args.Count -gt 0) {
     $query = $args -join " "

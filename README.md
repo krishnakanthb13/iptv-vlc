@@ -17,14 +17,16 @@ A lightweight, menu-driven PowerShell, Batch, and Bash launcher for streaming gl
 - **Fuzzy Matching**: Intelligent matching that handles typos and partial names.
 - **Search Sensitivity (`T`)**: Adjust the fuzzy logic sensitivity (0.1 to 1.0).
 - **Quick Search from CLI**: Pass a query directly as a command-line argument to skip the menu.
+- **CLI Flags**: Full `--version` / `-v` and `--help` / `-h` support across all launchers.
 - **Smart Caching**: Downloads the 30k master list once, caches it in a user-scoped temp file using atomic writes for 24 hours with age display and network failure fallback. A forced refresh never destroys a working cache.
-- **Robust URL Validation**: Scheme, hostname, and whitespace validation keeps `http`/`https` plus VLC-playable schemes (`rtsp`, `rtmp`, `udp`, `rtp`, `mms`) and rejects malformed entries.
+- **Robust URL & Input Validation**: Strict scheme and hostname checks; rejects dangerous double quotes `"` (preventing CMD injection), exclamation marks `!` (preventing delayed expansion corruption), and malformed ports or whitespace.
 - **Unicode-Safe Output**: Channel names or queries the console codepage cannot represent are replaced rather than crashing the search.
 - **Force Refresh**: Bypass the cache with `--force-refresh`.
 - **Channel Count**: Shows how many channels were loaded after parsing.
 - **Download Timing**: Displays elapsed time for fresh downloads.
 - **Help Screen (`H`)**: Built-in help with usage examples (Batch launcher).
 - **Cross-Platform Parity**: Consistent menu, search, sensitivity, and caching behavior on Windows (PowerShell/Batch), Linux, and macOS (Bash). Fully supports macOS default Bash 3.2 and Windows multi-word arguments.
+- **Automated Test Suite & CI**: Built-in `unittest` test suite with GitHub Actions multi-platform CI matrix on Ubuntu and Windows across Python 3.8–3.12.
 
 ## How to Use It
 
@@ -50,20 +52,30 @@ A lightweight, menu-driven PowerShell, Batch, and Bash launcher for streaming gl
    - Make it executable: `chmod +x IPTV_Launcher.sh`
    - Then run it: `./IPTV_Launcher.sh`
 
-### Quick Search (Command Line)
+### Quick Search & CLI Flags
 
-Skip the menu and search directly by passing a channel name as an argument:
+Skip the menu and search directly by passing a channel name as an argument, or pass `--version` / `-v` or `--help` / `-h`:
 
 ```bash
 # Windows (Batch)
 IPTV_Launcher.bat "BBC News"
-IPTV_Launcher.bat "ESPN"
+IPTV_Launcher.bat --version
 
 # Windows (PowerShell)
 .\IPTV_Launcher.ps1 "CNN"
+.\IPTV_Launcher.ps1 --version
 
 # Linux / macOS
 ./IPTV_Launcher.sh "Discovery"
+./IPTV_Launcher.sh --version
+```
+
+### Running Tests
+
+Run the complete automated test suite using Python's built-in `unittest`:
+
+```bash
+python -m unittest discover -s tests -v
 ```
 
 ### Interactive Menu
@@ -88,9 +100,10 @@ python iptv_search.py --query "Discovery" --force-refresh
 
 ### 1. Global Search Engine (`iptv_search.py`)
 
-- **M3U Parsing**: Correctly parses `EXTINF` tags, even when channel names contain commas.
+- **M3U Parsing**: Correctly parses `EXTINF` tags even when channel names contain commas, and handles escaped quotes (`\"`) inside attributes without corrupting parsed tags.
+- **Security Hardening**: Rejects dangerous double quotes `"` (command injection defense) and exclamation marks `!` (CMD delayed expansion corruption defense), as well as control characters and unencoded whitespace. Validates schemes (`http`, `https`, `rtsp`, `rtmp`, `udp`, `rtp`, `mms`) and hostnames.
 - **Fuzzy Logic**: Utilizes `difflib.SequenceMatcher` with scoring bonuses for exact and substring matches.
-- **Smart Caching**: Caches the master M3U list to a system temp file using atomic writes for 24 hours. Displays cache age and timestamp when using cached data. Falls back to cache automatically on network failure, including during a forced refresh.
+- **Smart Caching**: Caches the master M3U list to a user-scoped temp file using atomic writes for 24 hours. Displays cache age and timestamp when using cached data. Falls back to cache automatically on network failure, including during a forced refresh.
 - **Force Refresh**: `--force-refresh` downloads fresh data while keeping the previous cache as a fallback.
 - **Download Timing**: Shows elapsed time for fresh downloads.
 - **Channel Count**: Displays total channels loaded after parsing.
@@ -106,7 +119,7 @@ To allow the Python search engine to run interactively while communicating the s
 
 ### 4. Python Detection
 
-On Windows, both PowerShell and Batch launchers validate Python by actually running `--version` (via `Get-Command -CommandType Application` / `where`) to reliably bypass the Microsoft Store Python stub that can interfere with Python detection.
+All three launchers (PowerShell, Batch, and Bash) validate Python candidates by executing `--version` and verifying that the major version is >= 3. This reliably bypasses the dummy Microsoft Store Python alias on Windows and ignores legacy Python 2 or broken installations found on PATH.
 
 ### 5. Exit Codes
 

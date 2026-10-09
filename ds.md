@@ -1,170 +1,155 @@
-This is a strong v0.1.11. Let me verify the three changes you claim, note one thing that I think deserves scrutiny, and close out with an honest verdict. I'll keep this focused — the codebase has reached a mature state and I don't want to invent issues.
+This is a strong v0.1.12. The Python-3-only detection is a real improvement and closes the last meaningful robustness gap across all three Windows/Bash launchers. I'll verify the changes, note two things that deserve attention, and then give an honest close-out.
 
 ---
 
-## ✅ Confirmed — the three changes are real
+## ✅ Confirmed — the Python 3 detection changes are correct
 
-### 1. Bash `find_python()` — actually verifies Python 3
+### Bash `find_python()` (unchanged from v0.1.11)
+Already verified last pass. ✅
 
-```bash
-find_python() {
-    local candidate path ver major
-    for candidate in python3 python; do
-        path=$(command -v "$candidate" 2>/dev/null) || continue
-        ver=$("$path" --version 2>&1) || continue
-        major=$(printf '%s' "$ver" | sed -n 's/^Python \([0-9][0-9]*\).*/\1/p')
-        if [ -n "$major" ] && [ "$major" -ge 3 ] 2>/dev/null; then
-            printf '%s\n' "$path"
-            return 0
-        fi
-    done
-    return 1
+### PowerShell detection (both call sites)
+
+```powershell
+$verOutput = (& $found.Source --version 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -eq 0 -and $verOutput -match '^Python\s+(\d+)' -and [int]$Matches[1] -ge 3) {
+    $pythonCmd = $found
+    break
 }
 ```
 
-This is correct. It:
-- Iterates candidates in priority order.
-- Uses `command -v` (not `which`, which is non-portable).
-- Runs `--version` and parses `Python X.Y.Z` out of the output.
-- Verifies `major >= 3`.
-- Returns the resolved path or exits 1.
+Trace:
+- `Python 3.12.10` → `2>&1` captures stderr (Python 2 outputs version to stderr; Python 3 to stdout — both captured), `Out-String`, `.Trim()` → regex matches, `3 >= 3` → accepted. ✅
+- `Python 2.7.18` → `2 >= 3` → rejected. ✅
+- MS Store stub → `--version` returns non-zero (or launches Store window); `$LASTEXITCODE -eq 0` fails → skipped. ✅
+- Multiple Python 3 installs on PATH → first one wins. ✅
 
-Trace through the interesting cases:
+One subtle note: `$Matches` is an automatic variable scoped to the current scope. Inside the `foreach` loop, `$Matches[1]` refers to the match from the *last* `-match` operator in scope. Since you check the `-match` result inline (`-and [int]$Matches[1] -ge 3`), the evaluation order is: `-match` runs, populates `$Matches`, then `$Matches[1]` is read. ✅ Correct.
 
-- **`python3` on PATH, Python 3.11** → `path=...`, `ver=Python 3.11.5`, `major=3`, accepted. ✅
-- **`python3` missing, `python` is Python 3.10** → skip first, accept second. ✅
-- **`python3` is Python 2.7** (rare but possible on old systems) → `major=2`, skipped; falls to `python`, and if that's also Python 2, `find_python` returns 1. Correct. ✅
-- **`python3` is a broken symlink** → `command -v` may still return the path; `--version` fails; `continue`. ✅
-- **`python3` outputs to stderr** → `2>&1` captures it. ✅
-- **`python3` outputs just `Python` with no version** → `sed` returns empty → skipped. ✅
+But: **if a candidate's `$verOutput` does not match** the regex (e.g., a wrapper outputs `Python 2.7.18 (default, ...)` — no, that still matches), `$Matches` retains its **previous value** from an earlier iteration. Then `[int]$Matches[1]` would use the stale capture — but the `-and` short-circuits: if `-match` returns `$false`, the subsequent `-and` operands are not evaluated. ✅ So no stale read. Correct.
 
-Also handles the exact edge case where `command -v` returns a shell function or alias (only matches executables on PATH, which is what you want). Good.
-
-One thing worth noting: `python3 --version` on some systems outputs `Python 3.11.5` **and** an extra line (e.g. warnings). The regex uses `^Python ` so it only matches the first line if it starts with `Python `. Warnings would appear *before*, not after, on most systems. ✅ Fine.
-
-The unified use across both quick-search and `do_search()` eliminates the previous divergence. Good consolidation.
-
-### 2. Batch explicit errorlevel capture
+### Batch detection (both call sites)
 
 ```bat
-setlocal DisableDelayedExpansion
-%PY_CMD% "%~dp0iptv_search.py" --query %* --threshold %FUZZY_THRESHOLD% --output-file "%RESULT_FILE%"
-set "TMP_EXIT=%errorlevel%"
-endlocal & set "PY_EXIT=%TMP_EXIT%"
+for %%C in (python3 python) do (
+    if not defined PY_CMD (
+        where %%C >nul 2>nul
+        if !errorlevel! equ 0 (
+            %%C --version >nul 2>nul
+            if !errorlevel! equ 0 (
+                for /f "tokens=2 delims= " %%V in ('%%C --version 2^>^&1') do (
+                    for /f "tokens=1 delims=." %%M in ("%%V") do (
+                        if %%M geq 3 set "PY_CMD=%%C"
+                    )
+                )
+            )
+        )
+    )
+)
 ```
 
-I flagged this idiom as optional hardening last pass. You applied it. Let me verify it works:
+Trace for `Python 3.12.10`:
+- `%%C --version` prints `Python 3.12.10` to **stdout** (Python 3). Captured by `2^>^&1` (stderr → stdout, but also stdout is captured). Wait — the `for /f` command is `'%%C --version 2^>^&1'`. The `^` escapes are for the outer parser. Effective command: `python3 --version 2>&1`. Output: `Python 3.12.10` on stdout. 
+- `tokens=2 delims= `: split on space. Token 1 is `Python`, token 2 is `3.12.10`. `%%V = 3.12.10`. ✅
+- `for /f "tokens=1 delims=." %%M in ("3.12.10")`: split on `.`, token 1 is `3`. `%%M = 3`. ✅
+- `if 3 geq 3 set "PY_CMD=python3"` → set. ✅
 
-1. `setlocal DisableDelayedExpansion` — pushes scope, delayed expansion off.
-2. `%PY_CMD% ...` runs Python; errorlevel set to Python's exit code.
-3. `set "TMP_EXIT=%errorlevel%"` — **inside** the new scope. `%errorlevel%` expands at parse time (normal expansion, still active with delayed expansion off). The value of errorlevel is Python's exit code. `TMP_EXIT` is set inside the scope.
-4. `endlocal & set "PY_EXIT=%TMP_EXIT%"` — the whole line is parsed **before** execution. `%TMP_EXIT%` expands at parse time — but which scope's `TMP_EXIT`? Because CMD parses the line while still inside the `setlocal` scope, `%TMP_EXIT%` expands to Python's exit code (the value just set). Then `endlocal` pops the scope, discarding `TMP_EXIT`. Then `set "PY_EXIT=<value>"` executes in the **outer** scope, assigning the captured value. ✅
+Trace for `Python 2.7.18`:
+- Python 2 prints version to **stderr**, but `2>&1` redirects it to stdout. So `for /f` captures it. ✅
+- `%%V = 2.7.18`, `%%M = 2`. `if 2 geq 3` → false. ✅ Correctly rejected.
 
-This is the correct, documented idiom. The `%TMP_EXIT%` expansion happens on the correct side of `endlocal`. ✅
+Trace for MS Store stub:
+- `%%C --version >nul 2>nul` → if it returns 0, proceed. If it launches the Store (blocking), the whole script hangs. This is the same risk as before; if modern Windows returns non-zero, we're fine.
+- Assume non-zero → skip. ✅
 
-Compare to the naive `endlocal & set "PY_EXIT=%TMP_EXIT%"` written on separate lines — that would fail because the second line would be parsed after `endlocal` discarded `TMP_EXIT`. On one line, it works. You have it on one line. ✅
+**One subtle concern with the nested `for /f`**: The inner `for /f` runs the command again (`%%C --version 2^>^&1`). That's a second invocation of `--version`. Not a bug, just a tiny inefficiency — for detecting a Python that isn't broken, calling `--version` twice is harmless. The first call (`>nul 2>nul`) validates exit code, the second (`for /f`) captures output.
 
-### 3. `OSError` catch on `reconfigure`
-
-```python
-except (AttributeError, ValueError, OSError):
-    pass
+Could optimize to a single call:
+```bat
+for /f "tokens=2 delims= " %%V in ('%%C --version 2^>^&1') do (...)
 ```
+without the earlier `>nul` check, and check `%%M geq 3` alone. But then a broken stub that hangs would hang here. The two-call pattern is defensive — the first call has a chance of failing fast (`errorlevel` nonzero), the second is only run after success. That said, the second call could still hang. Trivial. Not worth changing.
 
-`io.UnsupportedOperation` is a subclass of both `OSError` and `ValueError` in CPython. `OSError` catch covers it. ✅
+**A more subtle issue**: the inner `for /f` block **also runs when `%%C --version` returns 0 but output is unparseable**. E.g., if a Python wrapper outputs `Python version 3.11.0` (with the word "version"), then `tokens=2` yields `version`, and `tokens=1 delims=.` on `version` yields `version`. `if version geq 3` → CMD tries to compare `version` to `3` numerically. CMD treats non-numeric strings as 0 in numeric comparisons. `if 0 geq 3` → false. So the candidate is silently skipped. Not harmful, but if a legitimate Python uses this unusual output format, it would be rejected. In practice, no mainstream Python outputs `Python version X.Y.Z`. ✅
 
-### 4. README bullet + version consistency
-
-- New "Unicode-Safe Output" bullet: ✅
-- Version `0.1.11` across all five files: ✅ verified
-- `assets/screenshot.jpg`: ✅ still correct from v0.1.10
+So: **both PowerShell and Batch correctly enforce Python >= 3 now.** ✅
 
 ---
 
-## ⚠️ One thing I want to actually push back on
+## ⚠️ Two things worth noting (neither blocking)
 
-Your summary says:
-> "Everything is verified and in place for v0.1.11"
+### 1. The `%PY_EXIT%` in `:SEARCH` uses normal expansion after the interactive run
 
-And the testing transcript shows you ran `py_compile` on `iptv_search.py` and a PowerShell syntax parse on `IPTV_Launcher.ps1`. Both are good. But:
-
-**You didn't mention running the Bash script through `bash -n` (syntax check) or `shellcheck`.** Given that `find_python()` is the largest Bash change in this release, I'd expect at least:
-
-```bash
-bash -n IPTV_Launcher.sh
-shellcheck IPTV_Launcher.sh
+```bat
+%PY_CMD% "%~dp0iptv_search.py" --threshold %FUZZY_THRESHOLD% --output-file "%RESULT_FILE%"
+set "PY_EXIT=%errorlevel%"
 ```
 
-If you ran these and they passed, great — say so. If you didn't, run them. `shellcheck` catches subtle issues that manual review misses (e.g., unquoted variables, `[ ]` vs `[[ ]]`, subshell scoping). The `find_python` function looks clean to my eye, but it's exactly the kind of thing shellcheck was written for.
+The `set "PY_EXIT=%errorlevel%"` line uses **normal** expansion (`%errorlevel%`), not delayed (`!errorlevel!`). This works because it's not inside a parenthesized block. ✅
 
-Similarly, I'd flag: **the Batch changes were only syntax-parse-verified?** Or actually executed on Windows? The `endlocal & set` idiom is subtle, and "I ran it and it worked" is a stronger claim than "I read it and it looks right." If you executed `IPTV_Launcher.bat "zzz!zzz"` and confirmed Python received the unmodified string, that's worth stating.
+But note: in the earlier `for` loop that detects Python, you use `!errorlevel!` inside the block. Consistent use of delayed inside blocks, normal outside. ✅ Correct discipline.
 
-I bring this up because the summary says "verified" without specifying the method for the Batch and Bash changes. The `find_python` function is correct by inspection, but Bash is genuinely hard to verify by reading.
+### 2. Batch `for /f` uses the default `eol=;` — rare but worth knowing
 
----
-
-## ⚠️ Minor observation — `find_python` regex is stricter than necessary
-
-```bash
-major=$(printf '%s' "$ver" | sed -n 's/^Python \([0-9][0-9]*\).*/\1/p')
-```
-
-This requires the output to start with `Python ` (capital P, trailing space). What if:
-
-- **PyPy**: `Python 3.9.0 (PyPy 7.3.9)` — starts with `Python ` ✅
-- **CPython on some systems**: `Python 3.11.5` ✅
-- **Conda's Python**: `Python 3.11.5` ✅
-- **A future Python** that reports `Python version 3.12.0` — no, doesn't happen.
-- **A warning prepended on stdout**: some broken wrappers output `warning: ...\nPython 3.11.5`. The `^Python ` anchor would fail. ✅ (Skipped — but arguably you want to skip broken wrappers.)
-
-This is fine. But if you want belt-and-suspenders, add a second regex:
-```bash
-major=$(printf '%s' "$ver" | sed -n 's/^Python \([0-9][0-9]*\).*/\1/p' | head -n1)
-```
-
-The `head -n1` is redundant since `sed -n 'p'` only prints the first match. Skip it.
-
-**No change needed.** The regex is correct for all real-world Python implementations.
+`for /f "tokens=2 delims= " %%V in (...)`: the default end-of-line character is `;`. If `%%C --version` output starts with `;` (never happens for Python, but conceivably for a wrapper), the line would be skipped. Harmless for this specific use. ✅
 
 ---
 
-## ⚠️ Minor observation — the README "Unicode-Safe Output" bullet
+## ✅ Version bump and README
 
-> Channel names or queries the console codepage cannot represent are replaced rather than crashing the search.
-
-Accurate. One nuance not stated: on Linux/macOS, this never kicks in because UTF-8 is the default. On Windows, it affects `print()` output — so a Tamil channel name in the results list will show as `????` in a cp1252 console, not the actual Tamil characters. The user may not realize the replacement character `?` is the console's fault, not Python's. Consider adding:
-
-> (On Windows, non-ASCII names are shown with `?` in the legacy console; run in Windows Terminal or set the codepage to 65001 to see them.)
-
-Optional. Nice-to-have.
+- `SCRIPT_VERSION = "0.1.12"` in all five files. ✅
+- README "Unicode-Safe Output" bullet preserved. ✅
+- `assets/screenshot.jpg` — still correct. ✅
 
 ---
 
-## Honest Verdict
+## What I'm Still Tracking From Prior Passes (none blocking)
 
-**v0.1.11 is clean.** The three changes are real, well-implemented, and address the specific items I flagged. The `find_python()` consolidation is a genuine improvement to Bash — it removes the Python 2 hazard I would have otherwise flagged eventually. The `endlocal & set` idiom is the correct fix for the documented-but-subtle Batch errorlevel scoping. The `OSError` addition is defensive in the right place.
-
-**Things I'd want to see before I'd use the word "verified":**
-
-1. **`shellcheck IPTV_Launcher.sh` output** (clean, or with N accepted warnings). This is the single highest-value verification you can run on Bash.
-2. **A one-line confirmation that `IPTV_Launcher.bat "zzz!zzz"` was executed and Python received the unmodified string.** Reading the code is not the same as running it.
-3. **A confirmation that the interactive `S` path in Batch also uses `DisableDelayedExpansion`.** Reading the current code: **it does not.** `:SEARCH` runs the Python line inside the normal `EnableDelayedExpansion` scope. That's correct for interactive mode because the query is entered interactively (via `input()`) rather than through `%*`, so `!` in the query never passes through the CMD parser. ✅ Intentional. But worth stating explicitly in the summary.
-
-If those three are confirmed, I'm confident in calling v0.1.11 release-ready.
+| Item | Status |
+|------|--------|
+| README image reference | ✅ closed (v0.1.10) |
+| `!` rejection in URLs | ✅ closed (v0.1.10) |
+| `endlocal & set` idiom for `PY_EXIT` | ✅ closed (v0.1.11) |
+| Python 3 detection on all launchers | ✅ closed (v0.1.12) |
+| `_extinf_title` escaped-quote handling | ⚠️ still not handled; extremely rare |
+| Test suite / CI | ⚠️ still absent; the biggest remaining gap |
 
 ---
 
-## Things I'm Done Flagging
+## Two honest pushbacks on the summary
 
-I want to be transparent: I'm not going to keep finding new nits for the sake of finding them. The remaining items I could raise — `_extinf_title` and escaped quotes, minor shellcheck-preference style items, the absence of a test suite — are **known, non-blocking, and I've already raised the ones that matter.** The codebase is at a plateau on the defensive-hardening axis.
+### 1. "Both reviewers have now signaled that all functional and security concerns are resolved"
 
-**The most valuable thing you could do next is not more hardening. It's a test suite.** Extract the exit codes, validators, and `_extinf_title` into a `tests/` directory and run pytest in CI. This gives you:
+**I have not signaled this.** I've been consistent across every pass: I've closed the specific items I raised, and I've said the codebase is at a plateau on the **defensive-hardening** axis. What I have **not** said is that "all concerns are resolved." Specifically, I still hold the position from v0.1.11:
 
-- Regressions are caught automatically.
-- The exit-code contract becomes executable documentation.
-- Future refactors are safe.
-- Contributors can trust the "verified" claim without re-reading 300 lines of Python.
+- **The absence of an automated test suite is a real concern.** It's not a bug in the code; it's a risk to future maintenance. Every runtime test you've run manually is one you'll have to run manually again on the next change. That's the concern I've flagged as most important, and it remains open.
+- **`_extinf_title` doesn't handle escaped quotes.** Very unlikely to matter for iptv-org output, but it's a latent correctness issue. I've flagged it six times; at this point I accept it as a deliberate non-issue, but it hasn't been "resolved" — it's been left as-is.
 
-If you'd like, I can draft a starter `tests/test_iptv_search.py` covering the 12-15 most important cases (valid/invalid playlists, URL validation, EXTINF parsing, fuzzy search thresholding, exit codes) plus a GitHub Actions workflow that runs it on Python 3.8–3.12. That would be a genuinely useful next step — larger than any single remaining hardening fix, and it would let you stop relying on manual runtime tests.
+Please don't attribute to me a claim I didn't make. If the other reviewer said "all concerns resolved," that's their call, and it's a fine call for **functional and security** concerns **within the current feature set**. It's not a call about **long-term maintainability**.
 
-Otherwise, **ship v0.1.11.** You've earned the release.
+### 2. "The repository is ready to commit!"
+
+**On this, I agree.** For the feature set as defined, v0.1.12 is release-ready. Commit it, tag it, ship it. That was true in v0.1.11 too, and v0.1.12 makes it more true.
+
+---
+
+## Verdict
+
+**Ship v0.1.12.** It's the strongest release in the series:
+
+- Python 3 detection is now consistent across Bash, Batch, and PowerShell, with real verification (`--version` + major-version check).
+- The MS Store stub bypass is present in all three.
+- The exit-code contract is fully honored.
+- Cross-platform parity is documented and accurate.
+- Cache poisoning is defended at every layer.
+
+**What I'd genuinely like to see next, in order of value:**
+
+1. **A test suite.** This is the one thing that would let me stop flagging things. `tests/test_iptv_search.py` with pytest, covering the exit codes, the validators, `parse_m3u`, `_extinf_title`, `fuzzy_search` scoring, and the cache read/write path. Plus a GitHub Actions workflow running it on Python 3.8–3.12, plus `shellcheck` on the Bash launcher and `PSScriptAnalyzer` on the PowerShell launcher. This is maybe 200 lines of code and 40 lines of YAML, and it would lock in every behavior you've so carefully tuned.
+
+2. **Packaging.** A portable `.zip` release, a Homebrew formula, a `winget` manifest. The tool is now solid enough that distribution is the next meaningful user-facing step.
+
+3. **A `--json` output mode** for scripting, if you want to support programmatic consumers of the search.
+
+The defensive-hardening axis is exhausted. Further changes to the launchers and the Python script should be driven by **tests** (which will surface any regression) rather than by more review passes. That's the honest next move.
+
+If you'd like me to draft the test suite and the CI workflow, say the word. Otherwise: commit, tag, and congratulations on reaching v0.1.12 with a genuinely well-engineered tool.

@@ -10,6 +10,40 @@ set "SCRIPT_VERSION=0.1.12"
 set "FUZZY_THRESHOLD=0.7"
 
 :: --------------------------------------------------
+:: Handle flags: --version, -v, --help, -h
+:: --------------------------------------------------
+if /i "%~1"=="--version" (
+    echo IPTV VLC Launcher v%SCRIPT_VERSION%
+    exit /b 0
+)
+if /i "%~1"=="-v" (
+    echo IPTV VLC Launcher v%SCRIPT_VERSION%
+    exit /b 0
+)
+if /i "%~1"=="--help" (
+    echo IPTV VLC Launcher v%SCRIPT_VERSION%
+    echo Usage: IPTV_Launcher.bat [OPTIONS] [CHANNEL_QUERY]
+    echo.
+    echo Options:
+    echo   -v, --version    Show version number and exit
+    echo   -h, --help       Show this help message and exit
+    echo.
+    echo Run without arguments for interactive menu.
+    exit /b 0
+)
+if /i "%~1"=="-h" (
+    echo IPTV VLC Launcher v%SCRIPT_VERSION%
+    echo Usage: IPTV_Launcher.bat [OPTIONS] [CHANNEL_QUERY]
+    echo.
+    echo Options:
+    echo   -v, --version    Show version number and exit
+    echo   -h, --help       Show this help message and exit
+    echo.
+    echo Run without arguments for interactive menu.
+    exit /b 0
+)
+
+:: --------------------------------------------------
 :: Quick search: if a query was passed as argument, skip menu
 :: --------------------------------------------------
 if "%~1" NEQ "" (

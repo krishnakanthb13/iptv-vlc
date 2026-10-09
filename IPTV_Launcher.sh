@@ -6,6 +6,23 @@ FUZZY_THRESHOLD=0.7
 SCRIPT_VERSION="0.1.12"
 # ---------------------
 
+# Handle flags: --version, -v, --help, -h
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+    echo "IPTV VLC Launcher v$SCRIPT_VERSION"
+    exit 0
+fi
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "IPTV VLC Launcher v$SCRIPT_VERSION"
+    echo "Usage: ./IPTV_Launcher.sh [OPTIONS] [CHANNEL_QUERY]"
+    echo ""
+    echo "Options:"
+    echo "  -v, --version    Show version number and exit"
+    echo "  -h, --help       Show this help message and exit"
+    echo ""
+    echo "Run without arguments for interactive menu."
+    exit 0
+fi
+
 # Detect VLC
 if command -v vlc &>/dev/null; then
     VLC="vlc"

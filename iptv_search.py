@@ -152,9 +152,18 @@ def _extinf_title(line):
 
     The name is everything after the first comma that is not inside a
     double-quoted attribute, so names containing commas are preserved.
+    Escaped quotes within attributes (\") are handled so they do not
+    prematurely close quoted context.
     """
     in_quotes = False
+    escape = False
     for i, ch in enumerate(line):
+        if escape:
+            escape = False
+            continue
+        if ch == '\\':
+            escape = True
+            continue
         if ch == '"':
             in_quotes = not in_quotes
         elif ch == ',' and not in_quotes:

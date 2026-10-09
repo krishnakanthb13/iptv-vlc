@@ -28,7 +28,7 @@ def _cache_file():
 CACHE_FILE = _cache_file()
 CACHE_EXPIRY = 3600 * 24  # 24 hours
 DOWNLOAD_TIMEOUT = 60  # seconds
-SCRIPT_VERSION = "0.1.9"
+SCRIPT_VERSION = "0.1.10"
 
 def _read_cache():
     """Read and return lines from cache if it exists, else None."""
@@ -247,6 +247,14 @@ def fuzzy_search(query, channels, threshold, limit):
 #   3 = no selection (user cancelled, EOF/Ctrl+C, or invalid selection)
 
 def main():
+    # Channel names and queries may contain characters the
+    # console codepage cannot represent (Windows defaults to
+    # cp1252); replace them instead of crashing on print.
+    try:
+        sys.stdout.reconfigure(errors="replace")
+        sys.stderr.reconfigure(errors="replace")
+    except (AttributeError, ValueError):
+        pass
     parser = argparse.ArgumentParser(description="IPTV Channel Search Engine")
     parser.add_argument(
         "--version", action="version",

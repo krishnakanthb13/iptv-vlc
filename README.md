@@ -1,4 +1,4 @@
-# IPTV VLC Launcher v0.1.9
+# IPTV VLC Launcher v0.1.10
 
 <p align="center">
   <img src="assets/screenshot.jpg" width="600" alt="IPTV VLC Launcher">
@@ -118,7 +118,7 @@ On Windows, both PowerShell and Batch launchers validate Python by actually runn
 | 2 | No channels matched the query |
 | 3 | No selection (user cancelled, EOF/Ctrl+C, or invalid selection) |
 
-In quick-search mode (`launcher "query"`), exit codes 2 and 3 are benign and the launcher exits 0, since nothing was launched and no error occurred. Interactive mode shows a message for each outcome.
+In quick-search mode (`launcher "query"`), exit codes 2 and 3 are benign and the launcher exits 0, since nothing was launched and no error occurred. If Python reports success (0) but produces no URL, the launcher prints a diagnostic and exits 1. Interactive mode shows a message for each outcome.
 
 ---
 

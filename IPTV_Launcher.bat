@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 title IPTV VLC Launcher
 color 0A
-set "SCRIPT_VERSION=0.1.9"
+set "SCRIPT_VERSION=0.1.10"
 
 :: --------------------------------------------------
 :: CONFIGURATION
@@ -269,7 +269,14 @@ if not exist "%~dp0iptv_search.py" (
 
 call :GEN_RESULT_FILE
 
+:: Run with delayed expansion off so a "!" in the
+:: query survives CMD parsing intact - with
+:: EnableDelayedExpansion on, a "!" in %* would
+:: consume a span of the line and corrupt the
+:: arguments Python receives.
+setlocal DisableDelayedExpansion
 %PY_CMD% "%~dp0iptv_search.py" --query %* --threshold %FUZZY_THRESHOLD% --output-file "%RESULT_FILE%"
+endlocal
 set "PY_EXIT=%errorlevel%"
 
 if exist "%RESULT_FILE%" (

@@ -1,61 +1,53 @@
-# IPTV VLC Launcher v0.1.9 — independent code audit
+# IPTV VLC Launcher v0.1.10 — independent audit
 
-Verdict: The major fixes appear present, but I would make two final consistency improvements before calling this release-ready. I checked the newly uploaded Python, Batch, PowerShell, Bash, wrapper, and README files rather than relying solely on the change summary.
+Assessment: The two newly reported bugs appear addressed in the uploaded source. I found one remaining cross-platform consistency issue, but no new confirmed critical vulnerability in this pass.
 
-## Findings
+## What checks out
 
-P2
+Batch delayed-expansion fix
 
-1\. PowerShell quick search still silently accepts an empty result
+The quick-search path wraps the Python invocation in `setlocal DisableDelayedExpansion`, then captures the exit code and processes the result afterward. This is the right approach for preventing `!` in a query from being consumed by CMD delayed expansion.&#x20;
 
-In `IPTV_Launcher.ps1`, the quick-search branch reads the result file only when Python exits with code `0`. If the file exists but is empty—or is unexpectedly absent—the launcher skips VLC and still exits successfully.
+Empty-result handling
 
-The interactive `Invoke-Search` path handles this correctly, but the quick-search path does not have equivalent feedback.
+PowerShell, Batch, and Bash quick-search paths now report `No channel URL was produced.` and return exit code `1` when Python reports success without producing a URL.&#x20;
 
-Recommended fix: When Python returns `0`, require a nonempty URL before reporting success. Otherwise, print a clear diagnostic and use a documented exit-code policy.
+IPTV_Launcher.sh
 
-P2
 
-2\. Batch quick search relies on `%*` argument forwarding
 
-The Batch launcher invokes Python using `%PY_CMD% ... --query %*`. Quoted multiword arguments should work in ordinary cases, but this approach deserves explicit testing with special characters and delayed expansion enabled.
+Unicode output and stricter parsing
 
-In particular, channel names containing `!` can be altered by CMD's delayed-expansion behavior. This is primarily an input-handling and compatibility edge case, not evidence of a new confirmed command-injection vulnerability.
+Python configures standard output and error streams to replace unrepresentable characters, rejects URLs containing double quotes or exclamation marks, and uses stricter `#EXTINF` directive matching in both validation and parsing.&#x20;
 
-Recommended fix: Test quick searches containing `!`, `&`, `%`, parentheses, spaces, and Unicode. If necessary, revise argument forwarding so that user input survives Batch parsing intact.
+iptv_search.py
+
+
+
+Version and syntax checks
+
+The uploaded Python, Bash, PowerShell, Batch, wrapper, and README files identify version `0.1.10`. Python compilation and Bash syntax validation both passed in my environment.&#x20;
+
+
+
+## Remaining finding
 
 P3
 
-3\. Playlist validation could also tighten `#EXTINF` matching
+Bash does not verify that its selected Python executable is Python 3
 
-The header validation is now appropriately stricter. However, both the playlist validator and parser use `startswith('#EXTINF')` semantics, which can accept malformed directive names such as `#EXTINFORMATION`.
+Both quick search and interactive search select `python3` when available, otherwise falling back to `python`. They check whether the command exists, but don't test its version or whether it can execute this script.&#x20;
 
-Recommended fix: If strict playlist validation is intended, require the `#EXTINF` token to be followed by a valid delimiter. Add malformed-directive tests to avoid rejecting legitimate playlist variants.
+IPTV_Launcher.sh
 
-## Verification summary
 
-Python syntax
 
-Compilation and AST parsing passed.
+On a system where `python` points to Python 2 or a broken executable, search can fail even though the launcher reports that Python was found.
 
-Bash syntax
+Recommended fix: Validate each candidate with `--version` and, if necessary, check the reported major version before choosing it. Reuse one detection function for both search paths.
 
-`bash -n` passed for the uploaded launcher.
+## Release recommendation
 
-Previous fixes retained
+Your reported 18/18 regression tests and Windows end-to-end results are encouraging. My local checks independently confirm Python compilation and Bash syntax, but I could not reproduce the Windows Batch/PowerShell tests in this environment.
 
-Double-quote URL rejection, stricter M3U header validation, and PowerShell candidate iteration are present in the uploaded files.
-
-Native Windows testing
-
-Batch and PowerShell execution, real multi-Python detection, and VLC playback were not verified here.
-
-## Recommended release checklist
-
-- Fix or explicitly document PowerShell quick-search behavior when Python reports success but produces no URL.
-- Test Batch quick search with special characters and multiword channel names.
-- Add regression tests for malformed `#EXTINF` directives.
-- On Windows, exercise all 25 menu options, interactive search outcomes, quick search, cancellation, and missing Python/VLC scenarios.
-- Confirm version `0.1.9` appears consistently in all launcher files and documentation.
-
-Overall assessment: v0.1.9 is a substantial improvement over the earlier revisions. I found no new confirmed critical issue in this review, but syntax checks alone do not establish cross-platform functional parity. After the two P2 items are resolved or consciously accepted, the project will be in a stronger position for release.
+I'd classify v0.1.10 as close to release-ready, with the Bash Python-version check as a worthwhile final hardening change rather than a critical blocker. I would keep the regression tests for special characters, Unicode, empty result files, malformed playlist directives, and exit-code mapping in the permanent test suite.

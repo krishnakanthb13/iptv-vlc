@@ -28,7 +28,7 @@ def _cache_file():
 CACHE_FILE = _cache_file()
 CACHE_EXPIRY = 3600 * 24  # 24 hours
 DOWNLOAD_TIMEOUT = 60  # seconds
-SCRIPT_VERSION = "0.1.10"
+SCRIPT_VERSION = "0.1.11"
 
 def _read_cache():
     """Read and return lines from cache if it exists, else None."""
@@ -164,9 +164,11 @@ def _extinf_title(line):
 
 def _is_valid_url(line):
     """True if line is a playable URL with a known scheme and hostname."""
-    # Reject double quotes and exclamation marks: RFC 3986 forbids unencoded
-    # quotes, and both characters break or get corrupted by Windows CMD
-    # argument handling / delayed expansion in the Batch launcher.
+    # Reject double quotes and exclamation marks: RFC 3986 forbids
+    # unencoded quotes, and '!' is corrupted by CMD delayed
+    # expansion. Rejected unconditionally so all three launchers
+    # present identical channel lists, even though only Batch
+    # is affected.
     if '"' in line or '!' in line:
         return False
     # Reject whitespace and control characters; legitimate spaces must be
@@ -253,7 +255,7 @@ def main():
     try:
         sys.stdout.reconfigure(errors="replace")
         sys.stderr.reconfigure(errors="replace")
-    except (AttributeError, ValueError):
+    except (AttributeError, ValueError, OSError):
         pass
     parser = argparse.ArgumentParser(description="IPTV Channel Search Engine")
     parser.add_argument(

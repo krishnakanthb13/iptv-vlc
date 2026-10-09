@@ -1,4 +1,4 @@
-# IPTV VLC Launcher v0.1.10
+# IPTV VLC Launcher v0.1.11
 
 <p align="center">
   <img src="assets/screenshot.jpg" width="600" alt="IPTV VLC Launcher">
@@ -19,6 +19,7 @@ A lightweight, menu-driven PowerShell, Batch, and Bash launcher for streaming gl
 - **Quick Search from CLI**: Pass a query directly as a command-line argument to skip the menu.
 - **Smart Caching**: Downloads the 30k master list once, caches it in a user-scoped temp file using atomic writes for 24 hours with age display and network failure fallback. A forced refresh never destroys a working cache.
 - **Robust URL Validation**: Scheme, hostname, and whitespace validation keeps `http`/`https` plus VLC-playable schemes (`rtsp`, `rtmp`, `udp`, `rtp`, `mms`) and rejects malformed entries.
+- **Unicode-Safe Output**: Channel names or queries the console codepage cannot represent are replaced rather than crashing the search.
 - **Force Refresh**: Bypass the cache with `--force-refresh`.
 - **Channel Count**: Shows how many channels were loaded after parsing.
 - **Download Timing**: Displays elapsed time for fresh downloads.

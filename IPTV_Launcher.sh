@@ -3,7 +3,7 @@
 
 # --- CONFIGURATION ---
 FUZZY_THRESHOLD=0.7
-SCRIPT_VERSION="0.1.10"
+SCRIPT_VERSION="0.1.11"
 # ---------------------
 
 # Detect VLC
@@ -22,14 +22,31 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SEARCH_SCRIPT="$SCRIPT_DIR/iptv_search.py"
 
+# Shared Python 3 detection for both search paths. Each candidate is
+# verified by actually running --version, so a Python 2 or broken
+# executable found on PATH is never selected.
+find_python() {
+    local candidate path ver major
+    for candidate in python3 python; do
+        path=$(command -v "$candidate" 2>/dev/null) || continue
+        ver=$("$path" --version 2>&1) || continue
+        major=$(printf '%s' "$ver" | sed -n 's/^Python \([0-9][0-9]*\).*/\1/p')
+        if [ -n "$major" ] && [ "$major" -ge 3 ] 2>/dev/null; then
+            printf '%s\n' "$path"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # Quick search: if a query was passed as argument, skip menu
 if [ $# -gt 0 ]; then
     query="$*"
-    if ! command -v python3 &>/dev/null && ! command -v python &>/dev/null; then
-        echo -e "\e[31mX Python not found.\e[0m"
+    python_cmd=$(find_python)
+    if [ -z "$python_cmd" ]; then
+        echo -e "\e[31mX Python 3 not found.\e[0m"
         exit 1
     fi
-    python_cmd=$(command -v python3 || command -v python)
     if [ ! -f "$SEARCH_SCRIPT" ]; then
         echo -e "\e[31mX iptv_search.py not found.\e[0m"
         exit 1
@@ -122,12 +139,9 @@ show_menu() {
 
 do_search() {
     local python_cmd
-    if command -v python3 &>/dev/null; then
-        python_cmd="python3"
-    elif command -v python &>/dev/null; then
-        python_cmd="python"
-    else
-        echo -e "\e[31mX Python not found. Please install Python 3 to use search.\e[0m"
+    python_cmd=$(find_python)
+    if [ -z "$python_cmd" ]; then
+        echo -e "\e[31mX Python 3 not found. Please install Python 3 to use search.\e[0m"
         read -r -p "Press Enter to continue..."
         return
     fi

@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 title IPTV VLC Launcher
 color 0A
-set "SCRIPT_VERSION=0.1.10"
+set "SCRIPT_VERSION=0.1.11"
 
 :: --------------------------------------------------
 :: CONFIGURATION
@@ -276,8 +276,8 @@ call :GEN_RESULT_FILE
 :: arguments Python receives.
 setlocal DisableDelayedExpansion
 %PY_CMD% "%~dp0iptv_search.py" --query %* --threshold %FUZZY_THRESHOLD% --output-file "%RESULT_FILE%"
-endlocal
-set "PY_EXIT=%errorlevel%"
+set "TMP_EXIT=%errorlevel%"
+endlocal & set "PY_EXIT=%TMP_EXIT%"
 
 if exist "%RESULT_FILE%" (
     set /p RESULT_URL=<"%RESULT_FILE%"

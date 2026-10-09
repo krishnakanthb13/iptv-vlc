@@ -28,7 +28,7 @@ def _cache_file():
 CACHE_FILE = _cache_file()
 CACHE_EXPIRY = 3600 * 24  # 24 hours
 DOWNLOAD_TIMEOUT = 60  # seconds
-SCRIPT_VERSION = "0.1.8"
+SCRIPT_VERSION = "0.1.9"
 
 def _read_cache():
     """Read and return lines from cache if it exists, else None."""
@@ -63,7 +63,8 @@ def _is_valid_playlist(content):
     head = content.lstrip('\ufeff\r\n \t')
     first_line = head.split('\n', 1)[0].strip().upper()
     # The header may carry attributes, e.g. "#EXTM3U x-tvg-url=..."
-    if not first_line.startswith('#EXTM3U'):
+    # but the token itself must be exactly "#EXTM3U"
+    if first_line != '#EXTM3U' and not first_line.startswith(('#EXTM3U ', '#EXTM3U\t')):
         return False
     return any(
         line.lstrip().upper().startswith('#EXTINF')
@@ -163,6 +164,11 @@ def _extinf_title(line):
 
 def _is_valid_url(line):
     """True if line is a playable URL with a known scheme and hostname."""
+    # Reject double quotes: RFC 3986 forbids them unencoded, and an
+    # embedded quote would break out of the quoted argument that the
+    # Batch launcher builds around the URL (command injection).
+    if '"' in line:
+        return False
     # Reject whitespace and control characters; legitimate spaces must be
     # percent-encoded in a URL
     if any(ord(c) < 32 or c.isspace() for c in line):
@@ -185,7 +191,7 @@ def parse_m3u(lines):
     current_name = None
     for line in lines:
         line = line.strip()
-        if line.startswith("#EXTINF"):
+        if line.upper().startswith("#EXTINF"):
             current_name = _extinf_title(line)
         elif current_name:
             if _is_valid_url(line):

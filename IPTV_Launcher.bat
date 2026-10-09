@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 title IPTV VLC Launcher
 color 0A
-set "SCRIPT_VERSION=0.1.8"
+set "SCRIPT_VERSION=0.1.9"
 
 :: --------------------------------------------------
 :: CONFIGURATION

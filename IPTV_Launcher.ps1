@@ -5,7 +5,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 # --- CONFIGURATION ---
 $FuzzyThreshold = 0.7
-$ScriptVersion = "0.1.8"
+$ScriptVersion = "0.1.9"
 # ---------------------
 
 # Quick search: if a query was passed as argument, skip menu
@@ -15,14 +15,18 @@ if ($args.Count -gt 0) {
     $vlc = if (Test-Path "C:\Program Files\VideoLAN\VLC\vlc.exe") { "C:\Program Files\VideoLAN\VLC\vlc.exe" }
     elseif (Test-Path "C:\Program Files (x86)\VideoLAN\VLC\vlc.exe") { "C:\Program Files (x86)\VideoLAN\VLC\vlc.exe" }
     else { Write-Host "X VLC not found." -ForegroundColor Red; exit 1 }
-    # Detect Python properly (bypass MS Store stub)
+    # Detect Python properly (bypass MS Store stub and broken
+    # installs). Get-Command can return multiple matches (e.g.
+    # several Python versions on PATH), so every candidate is
+    # verified with --version and the first functional one wins.
     $pythonCmd = $null
     foreach ($cmd in "python3", "python") {
-        $found = Get-Command $cmd -CommandType Application -ErrorAction SilentlyContinue
-        if ($found) {
+        $candidates = @(Get-Command $cmd -CommandType Application -ErrorAction SilentlyContinue)
+        foreach ($found in $candidates) {
             try { & $found.Source --version 2>$null; $code = $LASTEXITCODE } catch { $code = 1 }
             if ($code -eq 0) { $pythonCmd = $found; break }
         }
+        if ($pythonCmd) { break }
     }
     if (-not $pythonCmd) { Write-Host "X Python not found." -ForegroundColor Red; exit 1 }
     $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
@@ -95,17 +99,21 @@ $urls = @{
 
 function Invoke-Search {
     # Detect Python by actually trying to run --version
-    # This is the only way to bypass the dummy Microsoft Store aliases reliably
+    # This is the only way to bypass the dummy Microsoft Store
+    # aliases reliably. Get-Command can return multiple matches
+    # (several Python versions on PATH), so every candidate is
+    # verified and the first functional one wins.
     $pythonCmd = $null
     foreach ($cmd in "python3", "python") {
-        $found = Get-Command $cmd -CommandType Application -ErrorAction SilentlyContinue
-        if ($found) {
+        $candidates = @(Get-Command $cmd -CommandType Application -ErrorAction SilentlyContinue)
+        foreach ($found in $candidates) {
             try { & $found.Source --version 2>$null; $code = $LASTEXITCODE } catch { $code = 1 }
             if ($code -eq 0) {
                 $pythonCmd = $found
                 break
             }
         }
+        if ($pythonCmd) { break }
     }
 
     if (-not $pythonCmd) {
@@ -147,14 +155,19 @@ function Invoke-Search {
             return
         }
 
+        $url = $null
         if (Test-Path $resultFile) {
             $url = (Get-Content $resultFile -Raw)
-            if ($url) {
-                $url = $url.Trim()
-                Write-Host "`nLaunching VLC..." -ForegroundColor Green
-                Start-Process -FilePath "$vlc" -ArgumentList "`"$url`""
-                Start-Sleep -Seconds 1
-            }
+        }
+        if ($url) {
+            $url = $url.Trim()
+            Write-Host "`nLaunching VLC..." -ForegroundColor Green
+            Start-Process -FilePath "$vlc" -ArgumentList "`"$url`""
+            Start-Sleep -Seconds 1
+        } else {
+            # Exit 0 but no URL - inconsistent result, report it
+            Write-Host "`nNo channel was selected." -ForegroundColor Yellow
+            Start-Sleep -Seconds 1
         }
     }
     catch {

@@ -3,7 +3,7 @@
 
 # --- CONFIGURATION ---
 FUZZY_THRESHOLD=0.7
-SCRIPT_VERSION="0.1.8"
+SCRIPT_VERSION="0.1.9"
 # ---------------------
 
 # Detect VLC

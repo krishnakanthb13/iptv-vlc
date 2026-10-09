@@ -5,7 +5,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 # --- CONFIGURATION ---
 $FuzzyThreshold = 0.7
-$ScriptVersion = "0.1.11"
+$ScriptVersion = "0.1.12"
 # ---------------------
 
 # Quick search: if a query was passed as argument, skip menu
@@ -16,15 +16,20 @@ if ($args.Count -gt 0) {
     elseif (Test-Path "C:\Program Files (x86)\VideoLAN\VLC\vlc.exe") { "C:\Program Files (x86)\VideoLAN\VLC\vlc.exe" }
     else { Write-Host "X VLC not found." -ForegroundColor Red; exit 1 }
     # Detect Python properly (bypass MS Store stub and broken
-    # installs). Get-Command can return multiple matches (e.g.
-    # several Python versions on PATH), so every candidate is
-    # verified with --version and the first functional one wins.
+    # installs, and confirm Python >= 3). Get-Command can return
+    # multiple matches (e.g. several Python versions on PATH),
+    # so every candidate is verified and the first functional Python 3 wins.
     $pythonCmd = $null
     foreach ($cmd in "python3", "python") {
         $candidates = @(Get-Command $cmd -CommandType Application -ErrorAction SilentlyContinue)
         foreach ($found in $candidates) {
-            try { & $found.Source --version 2>$null; $code = $LASTEXITCODE } catch { $code = 1 }
-            if ($code -eq 0) { $pythonCmd = $found; break }
+            try {
+                $verOutput = (& $found.Source --version 2>&1 | Out-String).Trim()
+                if ($LASTEXITCODE -eq 0 -and $verOutput -match '^Python\s+(\d+)' -and [int]$Matches[1] -ge 3) {
+                    $pythonCmd = $found
+                    break
+                }
+            } catch {}
         }
         if ($pythonCmd) { break }
     }
@@ -104,20 +109,21 @@ $urls = @{
 }
 
 function Invoke-Search {
-    # Detect Python by actually trying to run --version
-    # This is the only way to bypass the dummy Microsoft Store
-    # aliases reliably. Get-Command can return multiple matches
-    # (several Python versions on PATH), so every candidate is
-    # verified and the first functional one wins.
+    # Detect Python by actually running --version and checking major version >= 3.
+    # This bypasses the dummy Microsoft Store aliases and rejects Python 2.
+    # Get-Command can return multiple matches (several Python versions on PATH),
+    # so every candidate is verified and the first functional Python 3 wins.
     $pythonCmd = $null
     foreach ($cmd in "python3", "python") {
         $candidates = @(Get-Command $cmd -CommandType Application -ErrorAction SilentlyContinue)
         foreach ($found in $candidates) {
-            try { & $found.Source --version 2>$null; $code = $LASTEXITCODE } catch { $code = 1 }
-            if ($code -eq 0) {
-                $pythonCmd = $found
-                break
-            }
+            try {
+                $verOutput = (& $found.Source --version 2>&1 | Out-String).Trim()
+                if ($LASTEXITCODE -eq 0 -and $verOutput -match '^Python\s+(\d+)' -and [int]$Matches[1] -ge 3) {
+                    $pythonCmd = $found
+                    break
+                }
+            } catch {}
         }
         if ($pythonCmd) { break }
     }

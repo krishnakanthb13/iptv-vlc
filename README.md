@@ -1,4 +1,4 @@
-# IPTV VLC Launcher v0.1.11
+# IPTV VLC Launcher v0.1.12
 
 <p align="center">
   <img src="assets/screenshot.jpg" width="600" alt="IPTV VLC Launcher">

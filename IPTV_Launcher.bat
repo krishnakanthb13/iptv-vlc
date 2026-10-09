@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 title IPTV VLC Launcher
 color 0A
-set "SCRIPT_VERSION=0.1.11"
+set "SCRIPT_VERSION=0.1.12"
 
 :: --------------------------------------------------
 :: CONFIGURATION
@@ -240,18 +240,24 @@ if not defined VLC (
     exit /b 1
 )
 
-:: Pick the first Python candidate that actually runs.
+:: Pick the first Python candidate that actually runs and is Python 3.
 :: "where" alone is not enough: the Microsoft Store
 :: installs python3.exe/python.exe aliases that exist
-:: on disk but fail with exit 9009, so every candidate
-:: is verified with --version before being selected.
+:: on disk but fail with exit 9009. We verify --version
+:: exits cleanly and confirms major version >= 3.
 set "PY_CMD="
 for %%C in (python3 python) do (
     if not defined PY_CMD (
         where %%C >nul 2>nul
         if !errorlevel! equ 0 (
             %%C --version >nul 2>nul
-            if !errorlevel! equ 0 set "PY_CMD=%%C"
+            if !errorlevel! equ 0 (
+                for /f "tokens=2 delims= " %%V in ('%%C --version 2^>^&1') do (
+                    for /f "tokens=1 delims=." %%M in ("%%V") do (
+                        if %%M geq 3 set "PY_CMD=%%C"
+                    )
+                )
+            )
         )
     )
 )
@@ -303,18 +309,24 @@ exit /b !PY_EXIT!
 
 :: --------------------------------------------------
 :SEARCH
-:: Pick the first Python candidate that actually runs.
+:: Pick the first Python candidate that actually runs and is Python 3.
 :: "where" alone is not enough: the Microsoft Store
 :: installs python3.exe/python.exe aliases that exist
-:: on disk but fail with exit 9009, so every candidate
-:: is verified with --version before being selected.
+:: on disk but fail with exit 9009. We verify --version
+:: exits cleanly and confirms major version >= 3.
 set "PY_CMD="
 for %%C in (python3 python) do (
     if not defined PY_CMD (
         where %%C >nul 2>nul
         if !errorlevel! equ 0 (
             %%C --version >nul 2>nul
-            if !errorlevel! equ 0 set "PY_CMD=%%C"
+            if !errorlevel! equ 0 (
+                for /f "tokens=2 delims= " %%V in ('%%C --version 2^>^&1') do (
+                    for /f "tokens=1 delims=." %%M in ("%%V") do (
+                        if %%M geq 3 set "PY_CMD=%%C"
+                    )
+                )
+            )
         )
     )
 )

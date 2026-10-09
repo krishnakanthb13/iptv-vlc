@@ -28,7 +28,7 @@ def _cache_file():
 CACHE_FILE = _cache_file()
 CACHE_EXPIRY = 3600 * 24  # 24 hours
 DOWNLOAD_TIMEOUT = 60  # seconds
-SCRIPT_VERSION = "0.1.11"
+SCRIPT_VERSION = "0.1.12"
 
 def _read_cache():
     """Read and return lines from cache if it exists, else None."""

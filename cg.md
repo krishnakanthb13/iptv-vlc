@@ -1,53 +1,49 @@
-# IPTV VLC Launcher v0.1.10 — independent audit
+# IPTV VLC Launcher v0.1.11 — independent audit
 
-Assessment: The two newly reported bugs appear addressed in the uploaded source. I found one remaining cross-platform consistency issue, but no new confirmed critical vulnerability in this pass.
+Assessment: The Bash Python 3 detection fix is present, and the Python and Bash syntax checks pass. I found one remaining consistency gap in the Windows launchers: they check whether Python runs, but not whether it is Python 3.
 
-## What checks out
+## What I verified
 
-Batch delayed-expansion fix
+- Bash Python detection: `find_python()` tries `python3` and then `python`, executes `--version`, and checks that the major version is at least 3. Both search paths reuse it.&#x20;
 
-The quick-search path wraps the Python invocation in `setlocal DisableDelayedExpansion`, then captures the exit code and processes the result afterward. This is the right approach for preventing `!` in a query from being consumed by CMD delayed expansion.&#x20;
+  IPTV_Launcher.sh
 
-Empty-result handling
+- Batch exit-code capture: the quick-search path captures `%errorlevel%` before `endlocal` and transfers it to `PY_EXIT`. Empty output after a reported success is treated as an error.&#x20;
 
-PowerShell, Batch, and Bash quick-search paths now report `No channel URL was produced.` and return exit code `1` when Python reports success without producing a URL.&#x20;
+- Python robustness: the Unicode stream reconfiguration now catches `OSError` as well as `AttributeError` and `ValueError`. The playlist parser and URL validation retain the strict `#EXTINF` delimiters and reject quotes and exclamation marks.&#x20;
 
-IPTV_Launcher.sh
+  iptv_search.py
 
+- Documentation and versions: the README identifies v0.1.11 and documents Unicode-safe output. The five main project files I checked consistently report `0.1.11`; the wrapper batch file does not contain a version string.&#x20;
 
-
-Unicode output and stricter parsing
-
-Python configures standard output and error streams to replace unrepresentable characters, rejects URLs containing double quotes or exclamation marks, and uses stricter `#EXTINF` directive matching in both validation and parsing.&#x20;
-
-iptv_search.py
+  README.md
 
 
 
-Version and syntax checks
-
-The uploaded Python, Bash, PowerShell, Batch, wrapper, and README files identify version `0.1.10`. Python compilation and Bash syntax validation both passed in my environment.&#x20;
+Independent checks also passed: `py_compile` for the uploaded Python file and `bash -n` for the Bash launcher.&#x20;
 
 
 
 ## Remaining finding
 
-P3
+P3 — Windows Python detection does not confirm Python 3.
 
-Bash does not verify that its selected Python executable is Python 3
+Both Windows launchers accept a candidate if `--version` exits successfully:
 
-Both quick search and interactive search select `python3` when available, otherwise falling back to `python`. They check whether the command exists, but don't test its version or whether it can execute this script.&#x20;
+- Batch: checks the exit code, but not the reported version.&#x20;
 
-IPTV_Launcher.sh
+- PowerShell: uses the same functional-execution test in quick-search and interactive search.&#x20;
 
 
 
-On a system where `python` points to Python 2 or a broken executable, search can fail even though the launcher reports that Python was found.
+If `python3` is unavailable and `python` resolves to Python 2, either launcher may select it and then fail when the Python 3 search script runs.
 
-Recommended fix: Validate each candidate with `--version` and, if necessary, check the reported major version before choosing it. Reuse one detection function for both search paths.
+Recommended fix: apply the same major-version validation used by Bash to both Windows launchers. Parse the version output and accept only Python 3 or later; continue to the next candidate if the version is missing, malformed, or unsupported. Keep the existing execution check, since it also catches broken Microsoft Store aliases.
 
 ## Release recommendation
 
-Your reported 18/18 regression tests and Windows end-to-end results are encouraging. My local checks independently confirm Python compilation and Bash syntax, but I could not reproduce the Windows Batch/PowerShell tests in this environment.
+I’d consider v0.1.11 close to release-ready, with this Windows version check as the final hardening item.
 
-I'd classify v0.1.10 as close to release-ready, with the Bash Python-version check as a worthwhile final hardening change rather than a critical blocker. I would keep the regression tests for special characters, Unicode, empty result files, malformed playlist directives, and exit-code mapping in the permanent test suite.
+I could not independently run PowerShell syntax validation or native Windows end-to-end tests in this environment because neither `pwsh` nor `powershell` is available. That does not invalidate your reported Windows tests; it limits what I can independently confirm here.
+
+After the Windows version check is fixed and tested, I’d be comfortable recommending the commit, while retaining regression tests for Python detection, special-character queries, Unicode output, empty result files, and exit-code handling.

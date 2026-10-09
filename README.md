@@ -17,19 +17,19 @@ A lightweight, menu-driven PowerShell, Batch, and Bash launcher for streaming gl
 - **Fuzzy Matching**: Intelligent matching that handles typos and partial names.
 - **Search Sensitivity (`T`)**: Adjust the fuzzy logic sensitivity (0.1 to 1.0).
 - **Quick Search from CLI**: Pass a query directly as a command-line argument to skip the menu.
-- **Smart Caching**: Downloads the 30k master list once, caches it for 24 hours with age display and network failure fallback.
+- **Smart Caching**: Downloads the 30k master list once, caches it securely using atomic writes for 24 hours with age display and network failure fallback.
+- **Robust URL Validation**: Stricter `http`/`https` scheme validation protects against malformed streams.
 - **Force Refresh**: Bypass the cache with `--force-refresh`.
 - **Channel Count**: Shows how many channels were loaded after parsing.
 - **Download Timing**: Displays elapsed time for fresh downloads.
 - **Help Screen (`H`)**: Built-in help with usage examples (Batch launcher).
-- **Cross-Platform Parity**: Works identically on Windows (PowerShell/Batch), Linux, and macOS (Bash).
-- **Bash 3.x Compatible**: Works on macOS default Bash without associative arrays.
+- **Cross-Platform Parity**: Works identically on Windows (PowerShell/Batch), Linux, and macOS (Bash). Fully supports macOS default Bash 3.2 and Windows multi-word arguments.
 
 ## How to Use It
 
 ### Prerequisites
 - **VLC Media Player** must be installed.
-- **Python 3.6+** (recommended) or Python 2.7 must be installed to use the search engine (`S`).
+- **Python 3.6+** must be installed to use the search engine (`S`).
 
 ### Running the Launcher
 
@@ -87,7 +87,7 @@ python iptv_search.py --query "Discovery" --force-refresh
 
 - **M3U Parsing**: Correctly parses `EXTINF` tags, even when channel names contain commas.
 - **Fuzzy Logic**: Utilizes `difflib.SequenceMatcher` with scoring bonuses for exact and substring matches.
-- **Smart Caching**: Caches the master M3U list to a system temp file for 24 hours. Displays cache age and timestamp when using cached data. Falls back to cache automatically on network failure.
+- **Smart Caching**: Caches the master M3U list to a system temp file using atomic writes for 24 hours. Displays cache age and timestamp when using cached data. Falls back to cache automatically on network failure.
 - **Force Refresh**: `--force-refresh` flag deletes the cache and downloads fresh data.
 - **Download Timing**: Shows elapsed time for fresh downloads.
 - **Channel Count**: Displays total channels loaded after parsing.

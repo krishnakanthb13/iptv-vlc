@@ -120,7 +120,7 @@ function Invoke-Search {
     $tString = $FuzzyThreshold.ToString([System.Globalization.CultureInfo]::InvariantCulture)
     try {
         # Run Python interactively
-        & $pythonCmd "$SearchScript" --threshold $tString --output-file "$resultFile"
+        & $pythonCmd.Source "$SearchScript" --threshold $tString --output-file "$resultFile"
         
         if ($LASTEXITCODE -ne 0) {
             Write-Host "`n[!] Search engine closed or failed (Exit Code: $LASTEXITCODE)" -ForegroundColor Yellow

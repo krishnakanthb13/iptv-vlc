@@ -163,7 +163,7 @@ if not defined VLC (
 )
 
 python --version >nul 2>nul
-if %errorlevel% neq 0 (
+if !errorlevel! neq 0 (
     echo X Python not found. Please install Python 3 to use search.
     pause
     exit /b 1
@@ -192,7 +192,7 @@ exit /b 0
 :: --------------------------------------------------
 :SEARCH
 python --version >nul 2>nul
-if %errorlevel% neq 0 (
+if !errorlevel! neq 0 (
     echo X Python not found. Please install Python 3 to use search.
     pause
     goto MENU

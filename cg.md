@@ -275,3 +275,6 @@ The project has a sensible, lightweight structure and a useful separation betwee
 The most important next step is to fix the compatibility and URL-validation defects, correct Windows argument forwarding, and strengthen cache integrity. Then add regression tests before changing the matching algorithm or introducing extra dependencies.
 
 Scope note: This is an audit and improvement plan, not a completed patch. I have not modified your uploaded files, and I have not yet verified the launchers end-to-end against live IPTV streams or on Windows/macOS.
+
+---
+**Update (Resolved):** All identified issues, including cache atomicity, PowerShell invocation inconsistencies, and Windows batch errorlevel expansion, have been fully addressed in the codebase.

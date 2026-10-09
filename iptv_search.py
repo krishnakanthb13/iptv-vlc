@@ -62,8 +62,10 @@ def download_m3u(force_refresh=False):
             content = response.read().decode('utf-8', errors='ignore')
         elapsed = time.time() - start_time
         print(f"[i] Download completed in {elapsed:.1f}s")
-        with open(CACHE_FILE, 'w', encoding='utf-8') as f:
+        temp_cache = f"{CACHE_FILE}.tmp.{os.getpid()}"
+        with open(temp_cache, 'w', encoding='utf-8') as f:
             f.write(content)
+        os.replace(temp_cache, CACHE_FILE)
         return content.splitlines(True)
     except Exception as e:
         print(f"X Download failed: {e}", flush=True)

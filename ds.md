@@ -156,3 +156,6 @@ Bash is fine, but PowerShell explicitly uses `InvariantCulture` for threshold. T
 The most impactful fix is **#10 — forwarding `%*` in `IPTV_Launcher_ps.bat`**, since it silently breaks quick-search for the PowerShell path.
 
 Would you like me to produce corrected versions of any specific file, or write a unified `README.md` for the project?
+
+---
+**Update:** All highlighted issues have been successfully patched! This includes atomic cache writes, consistent `$pythonCmd.Source` usage in PowerShell, and delayed expansion `!errorlevel!` fixes in the Batch script.

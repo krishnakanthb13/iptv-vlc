@@ -1,4 +1,4 @@
-# IPTV VLC Launcher v0.1.7
+# IPTV VLC Launcher v0.1.8
 
 <p align="center">
   <img src="assets/release_v0.1.3.jpg" width="600" alt="IPTV VLC Launcher">
@@ -17,13 +17,13 @@ A lightweight, menu-driven PowerShell, Batch, and Bash launcher for streaming gl
 - **Fuzzy Matching**: Intelligent matching that handles typos and partial names.
 - **Search Sensitivity (`T`)**: Adjust the fuzzy logic sensitivity (0.1 to 1.0).
 - **Quick Search from CLI**: Pass a query directly as a command-line argument to skip the menu.
-- **Smart Caching**: Downloads the 30k master list once, caches it securely using atomic writes for 24 hours with age display and network failure fallback. A forced refresh never destroys a working cache.
+- **Smart Caching**: Downloads the 30k master list once, caches it in a user-scoped temp file using atomic writes for 24 hours with age display and network failure fallback. A forced refresh never destroys a working cache.
 - **Robust URL Validation**: Scheme, hostname, and whitespace validation keeps `http`/`https` plus VLC-playable schemes (`rtsp`, `rtmp`, `udp`, `rtp`, `mms`) and rejects malformed entries.
 - **Force Refresh**: Bypass the cache with `--force-refresh`.
 - **Channel Count**: Shows how many channels were loaded after parsing.
 - **Download Timing**: Displays elapsed time for fresh downloads.
 - **Help Screen (`H`)**: Built-in help with usage examples (Batch launcher).
-- **Cross-Platform Parity**: Works identically on Windows (PowerShell/Batch), Linux, and macOS (Bash). Fully supports macOS default Bash 3.2 and Windows multi-word arguments.
+- **Cross-Platform Parity**: Consistent menu, search, sensitivity, and caching behavior on Windows (PowerShell/Batch), Linux, and macOS (Bash). Fully supports macOS default Bash 3.2 and Windows multi-word arguments.
 
 ## How to Use It
 
@@ -101,11 +101,24 @@ The scripts automatically locate VLC at standard 64-bit and 32-bit installation 
 
 ### 3. Cross-Shell IPC
 
-To allow the Python search engine to run interactively while communicating the selected stream back to the shell, the launchers use a "side-channel" temporary file method. This ensures that search prompts are visible to the user across all terminal types.
+To allow the Python search engine to run interactively while communicating the selected stream back to the shell, the launchers use a "side-channel" temporary file method. This ensures that search prompts are visible to the user across all terminal types. Each instance gets its own collision-resistant filename (Batch generates a unique name and never reuses or deletes an existing one; PowerShell and Bash use the OS temp-file APIs `GetTempFileName` / `mktemp`).
 
 ### 4. Python Detection
 
 On Windows, both PowerShell and Batch launchers validate Python by actually running `--version` (via `Get-Command -CommandType Application` / `where`) to reliably bypass the Microsoft Store Python stub that can interfere with Python detection.
+
+### 5. Exit Codes
+
+`iptv_search.py` follows a documented exit-code contract that every launcher relies on:
+
+| Code | Meaning |
+|------|---------|
+| 0 | Channel selected — URL written to `--output-file` (or `RESULT_URL:` on stdout) |
+| 1 | Fatal error (download failed, invalid arguments) |
+| 2 | No channels matched the query |
+| 3 | No selection (user cancelled, EOF/Ctrl+C, or invalid selection) |
+
+In quick-search mode (`launcher "query"`), exit codes 2 and 3 are benign and the launcher exits 0, since nothing was launched and no error occurred. Interactive mode shows a message for each outcome.
 
 ---
 

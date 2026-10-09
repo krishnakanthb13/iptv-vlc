@@ -3,7 +3,7 @@
 
 # --- CONFIGURATION ---
 FUZZY_THRESHOLD=0.7
-SCRIPT_VERSION="0.1.7"
+SCRIPT_VERSION="0.1.8"
 # ---------------------
 
 # Detect VLC
@@ -43,8 +43,9 @@ if [ $# -gt 0 ]; then
         "$VLC" "$url" &
         exit 0
     fi
-    # Exit code 2 means no results - don't treat as error
-    if [ "$py_exit" -eq 2 ]; then
+    # Exit codes 2 (no matches) and 3 (no selection)
+    # are benign outcomes for a CLI invocation
+    if [ "$py_exit" -eq 2 ] || [ "$py_exit" -eq 3 ]; then
         exit 0
     fi
     exit $py_exit
@@ -142,7 +143,7 @@ do_search() {
     url=$(cat "$result_file" 2>/dev/null)
     rm -f "$result_file"
 
-    if [ "$py_exit" -ne 0 ] && [ "$py_exit" -ne 2 ]; then
+    if [ "$py_exit" -ne 0 ] && [ "$py_exit" -ne 2 ] && [ "$py_exit" -ne 3 ]; then
         echo -e "\e[31mX Search engine failed (exit $py_exit).\e[0m"
         read -r -p "Press Enter to continue..."
         return
@@ -150,6 +151,12 @@ do_search() {
     if [ "$py_exit" -eq 2 ]; then
         # No matches - Python already printed "No channels found"
         sleep 2
+        return
+    fi
+    if [ "$py_exit" -eq 3 ]; then
+        # User cancelled or made an invalid selection
+        echo -e "\e[33mNo channel was selected.\e[0m"
+        sleep 1
         return
     fi
     if [ "$py_exit" -eq 0 ] && [ -z "$url" ]; then

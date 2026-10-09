@@ -1,43 +1,64 @@
-## Additional findings from the v0.1.6 files
+## IPTV VLC Launcher v0.1.7 — independent audit
 
-I ran the Python compilation and Bash syntax checks successfully. The targeted tests also confirm that raw whitespace, malformed hosts, and invalid ports are rejected, while valid HTTPS/RTSP URLs and channel titles containing commas are handled correctly.&#x20;
+I reviewed the newly uploaded Python, Bash, PowerShell, Batch, wrapper, and README files. The revision improves the search-result handling, but I would not call it bulletproof or release-ready yet. One significant Batch menu-control-flow bug remains, and there are a couple of smaller consistency issues worth addressing.
 
+### Findings
 
+P1
 
-I found three remaining edge cases worth addressing:
+1\. Batch menu category selection is broken
 
-1\. Batch sensitivity input is expanded unsafely
+In the Batch launcher, the category branches use lines such as:
 
-Security hardening
+```
+if "%opt%"=="1" start "" "%VLC%" "%IDX1%" & goto MENU
+```
 
-The line `echo %new_t%| findstr ...` expands raw user input into a command before validation. Special characters such as `&` can be interpreted as command separators.
+In CMD, `&` separates commands, so `goto MENU` executes independently of the `if` condition. The first category check therefore sends execution back to the menu even when the selected option is not `1`. The later category checks never get a chance to run.
 
-Fix: Validate the input without inserting the untrusted value directly into a command line. Test inputs containing `&`, `|`, `%`, `!`, parentheses, and spaces.
+Fix: Use parenthesized blocks for each conditional action, or route valid numeric options through a shared handler. Apply this consistently to all 25 options.
 
-2\. Bash interactive search does not handle every failure code
+P2
 
-The interactive Bash path handles exit codes `1` and `2` explicitly, but other nonzero codes fall through.&#x20;
+2\. Python's cache is not user-scoped on Windows
 
-IPTV_Launcher.sh
+`_cache_file()` appends a user ID only when `os.getuid` exists. On Windows, that normally isn't the case, so accounts use the same predictable cache filename in the temporary directory. This contradicts the function's “User-scoped cache path” docstring and can cause cache collisions on shared systems.&#x20;
 
-
-
-Fix: Handle every code other than `0` and `2` as an error. This makes the behavior match PowerShell more closely.
-
-3\. Some launch paths don't require Python success
-
-The interactive Batch path launches VLC whenever the result file contains a URL, without requiring `PY_EXIT` to be zero. PowerShell quick search similarly attempts to launch VLC before evaluating the exit code.&#x20;
-
-IPTV_Launcher.sh
-
-README.md
+iptv_search(20261009-052903).py
 
 
 
-Fix: Launch VLC only when Python exits successfully and the result URL is nonempty. This protects against partial output if an unexpected error occurs.
+Fix: Use a per-user cache directory or a Windows-specific user identifier, while retaining safe atomic replacement.
 
-## Release recommendation
+P2
 
-The Python improvements in v0.1.6 look solid, particularly the `(lines, channels)` return contract, single-parse flow, playlist validation, and whitespace rejection. The remaining issues are concentrated in shell error handling and input safety.
+3\. Batch temporary result filename can collide
 
-My verdict: nearly release-ready, but not yet fully verified. I would fix the Batch input expansion first, then make the exit-code handling consistent across all three launchers. Actual Windows execution and VLC playback remain unverified; the static checks alone cannot establish complete cross-platform parity.
+The Batch launcher creates `%TEMP%\iptv_result_%RANDOM%.txt`. `%RANDOM%` has a limited range, and the code deletes a pre-existing file with that name before running Python. Concurrent launcher instances can therefore collide and interfere with each other's results.
+
+Fix: Create a uniquely named temporary file using a collision-resistant method, and avoid deleting a file that another running instance may own.
+
+P2
+
+4\. Cancellation and invalid selection are not fully distinguished
+
+In Python, EOF or Ctrl+C while prompting returns normally, and an invalid selection prints an error but also reaches normal completion. Both can produce exit code `0` without a selected URL. The shell launchers correctly check for a URL before launching, but the advertised four-way status model does not distinguish all these outcomes.&#x20;
+
+iptv_search(20261009-052903).py
+
+
+
+Fix: Define and document a consistent exit-code contract—or explicitly treat exit `0` with an empty result as “cancelled/no selection” in every launcher.
+
+### What passed
+
+- Python compilation: passed.
+- Bash syntax validation: passed.
+- The Python changes to cache fallback, playlist validation, URL validation, and result-file communication are sensible improvements based on the code reviewed.
+- The PowerShell quick-search path checks for Python success before launching VLC.
+
+These checks do not establish that Windows Batch/PowerShell execution or actual VLC playback works end to end. I couldn't run native Windows shell tests in this environment.
+
+### Verdict
+
+v0.1.7 is improved, but not yet release-ready. Fix the Batch menu branching first, then address temporary-file collisions and Windows cache scoping. After that, test all 25 Batch menu options and the four search outcomes in each supported launcher. I would also soften the README's claim that the implementations “work identically” until cross-platform parity has been tested.

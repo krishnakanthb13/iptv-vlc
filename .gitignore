@@ -56,7 +56,7 @@ desktop.ini
 *.cmd.log
 
 # Project specific
-iptv_master_cache.m3u
+iptv_master_cache*.m3u
 result_*.txt
 *.tmp.txt
 *.m3u~

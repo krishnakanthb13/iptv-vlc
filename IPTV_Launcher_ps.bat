@@ -4,4 +4,6 @@
 
 PowerShell.exe -ExecutionPolicy Bypass -File "%~dp0IPTV_Launcher.ps1" %*
 
-pause
+:: Only pause for interactive use (no arguments);
+:: quick-search invocations from other scripts must not block.
+if "%~1"=="" pause

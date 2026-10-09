@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 title IPTV VLC Launcher
 color 0A
-set "SCRIPT_VERSION=0.1.7"
+set "SCRIPT_VERSION=0.1.8"
 
 :: --------------------------------------------------
 :: CONFIGURATION
@@ -114,34 +114,112 @@ if /i "%opt%"=="T" goto SENSITIVITY
 if /i "%opt%"=="H" goto HELP
 if "%opt%"=="0" exit /b 0
 
-if "%opt%"=="1"  start "" "%VLC%" "%IDX1%" & goto MENU
-if "%opt%"=="2"  start "" "%VLC%" "%IDX2%" & goto MENU
-if "%opt%"=="3"  start "" "%VLC%" "%IDX3%" & goto MENU
-if "%opt%"=="4"  start "" "%VLC%" "%IDX4%" & goto MENU
+:: Each branch is parenthesized: without the parentheses,
+:: "& goto MENU" would run unconditionally because CMD
+:: treats "&" as a command separator outside the if.
+if "%opt%"=="1" (
+    start "" "%VLC%" "%IDX1%"
+    goto MENU
+)
+if "%opt%"=="2" (
+    start "" "%VLC%" "%IDX2%"
+    goto MENU
+)
+if "%opt%"=="3" (
+    start "" "%VLC%" "%IDX3%"
+    goto MENU
+)
+if "%opt%"=="4" (
+    start "" "%VLC%" "%IDX4%"
+    goto MENU
+)
 
-if "%opt%"=="5"  start "" "%VLC%" "%IN%"   & goto MENU
-if "%opt%"=="6"  start "" "%VLC%" "%US%"   & goto MENU
-if "%opt%"=="7"  start "" "%VLC%" "%TAM%"  & goto MENU
-if "%opt%"=="8"  start "" "%VLC%" "%TEL%"  & goto MENU
-if "%opt%"=="9"  start "" "%VLC%" "%ENG%"  & goto MENU
+if "%opt%"=="5" (
+    start "" "%VLC%" "%IN%"
+    goto MENU
+)
+if "%opt%"=="6" (
+    start "" "%VLC%" "%US%"
+    goto MENU
+)
+if "%opt%"=="7" (
+    start "" "%VLC%" "%TAM%"
+    goto MENU
+)
+if "%opt%"=="8" (
+    start "" "%VLC%" "%TEL%"
+    goto MENU
+)
+if "%opt%"=="9" (
+    start "" "%VLC%" "%ENG%"
+    goto MENU
+)
 
-if "%opt%"=="10" start "" "%VLC%" "%REG1%" & goto MENU
-if "%opt%"=="11" start "" "%VLC%" "%REG2%" & goto MENU
-if "%opt%"=="12" start "" "%VLC%" "%REG3%" & goto MENU
-if "%opt%"=="13" start "" "%VLC%" "%REG4%" & goto MENU
+if "%opt%"=="10" (
+    start "" "%VLC%" "%REG1%"
+    goto MENU
+)
+if "%opt%"=="11" (
+    start "" "%VLC%" "%REG2%"
+    goto MENU
+)
+if "%opt%"=="12" (
+    start "" "%VLC%" "%REG3%"
+    goto MENU
+)
+if "%opt%"=="13" (
+    start "" "%VLC%" "%REG4%"
+    goto MENU
+)
 
-if "%opt%"=="14" start "" "%VLC%" "%CAT1%"  & goto MENU
-if "%opt%"=="15" start "" "%VLC%" "%CAT2%"  & goto MENU
-if "%opt%"=="16" start "" "%VLC%" "%CAT3%"  & goto MENU
-if "%opt%"=="17" start "" "%VLC%" "%CAT4%"  & goto MENU
-if "%opt%"=="18" start "" "%VLC%" "%CAT5%"  & goto MENU
-if "%opt%"=="19" start "" "%VLC%" "%CAT6%"  & goto MENU
-if "%opt%"=="20" start "" "%VLC%" "%CAT7%"  & goto MENU
-if "%opt%"=="21" start "" "%VLC%" "%CAT8%"  & goto MENU
-if "%opt%"=="22" start "" "%VLC%" "%CAT9%"  & goto MENU
-if "%opt%"=="23" start "" "%VLC%" "%CAT10%" & goto MENU
-if "%opt%"=="24" start "" "%VLC%" "%CAT11%" & goto MENU
-if "%opt%"=="25" start "" "%VLC%" "%CAT12%" & goto MENU
+if "%opt%"=="14" (
+    start "" "%VLC%" "%CAT1%"
+    goto MENU
+)
+if "%opt%"=="15" (
+    start "" "%VLC%" "%CAT2%"
+    goto MENU
+)
+if "%opt%"=="16" (
+    start "" "%VLC%" "%CAT3%"
+    goto MENU
+)
+if "%opt%"=="17" (
+    start "" "%VLC%" "%CAT4%"
+    goto MENU
+)
+if "%opt%"=="18" (
+    start "" "%VLC%" "%CAT5%"
+    goto MENU
+)
+if "%opt%"=="19" (
+    start "" "%VLC%" "%CAT6%"
+    goto MENU
+)
+if "%opt%"=="20" (
+    start "" "%VLC%" "%CAT7%"
+    goto MENU
+)
+if "%opt%"=="21" (
+    start "" "%VLC%" "%CAT8%"
+    goto MENU
+)
+if "%opt%"=="22" (
+    start "" "%VLC%" "%CAT9%"
+    goto MENU
+)
+if "%opt%"=="23" (
+    start "" "%VLC%" "%CAT10%"
+    goto MENU
+)
+if "%opt%"=="24" (
+    start "" "%VLC%" "%CAT11%"
+    goto MENU
+)
+if "%opt%"=="25" (
+    start "" "%VLC%" "%CAT12%"
+    goto MENU
+)
 
 echo Invalid option. Please try again.
 timeout /t 2 >nul
@@ -162,21 +240,22 @@ if not defined VLC (
     exit /b 1
 )
 
-where python3 >nul 2>nul
-if !errorlevel! equ 0 (
-    set "PY_CMD=python3"
-) else (
-    where python >nul 2>nul
-    if !errorlevel! equ 0 (
-        set "PY_CMD=python"
-    ) else (
-        echo X Python not found. Please install Python 3 to use search.
-        pause
-        exit /b 1
+:: Pick the first Python candidate that actually runs.
+:: "where" alone is not enough: the Microsoft Store
+:: installs python3.exe/python.exe aliases that exist
+:: on disk but fail with exit 9009, so every candidate
+:: is verified with --version before being selected.
+set "PY_CMD="
+for %%C in (python3 python) do (
+    if not defined PY_CMD (
+        where %%C >nul 2>nul
+        if !errorlevel! equ 0 (
+            %%C --version >nul 2>nul
+            if !errorlevel! equ 0 set "PY_CMD=%%C"
+        )
     )
 )
-%PY_CMD% --version >nul 2>nul
-if !errorlevel! neq 0 (
+if not defined PY_CMD (
     echo X Python not found. Please install Python 3 to use search.
     pause
     exit /b 1
@@ -188,8 +267,7 @@ if not exist "%~dp0iptv_search.py" (
     exit /b 1
 )
 
-set "RESULT_FILE=%TEMP%\iptv_result_%RANDOM%.txt"
-if exist "%RESULT_FILE%" del "%RESULT_FILE%"
+call :GEN_RESULT_FILE
 
 %PY_CMD% "%~dp0iptv_search.py" --query %* --threshold %FUZZY_THRESHOLD% --output-file "%RESULT_FILE%"
 set "PY_EXIT=%errorlevel%"
@@ -206,26 +284,30 @@ if defined RESULT_URL (
         start "" "%VLC%" "%RESULT_URL%"
     )
 )
+:: Exit codes 2 (no matches) and 3 (no selection) are
+:: benign outcomes for a CLI invocation - report success.
 if !PY_EXIT! equ 2 exit /b 0
+if !PY_EXIT! equ 3 exit /b 0
 exit /b !PY_EXIT!
 
 :: --------------------------------------------------
 :SEARCH
-where python3 >nul 2>nul
-if !errorlevel! equ 0 (
-    set "PY_CMD=python3"
-) else (
-    where python >nul 2>nul
-    if !errorlevel! equ 0 (
-        set "PY_CMD=python"
-    ) else (
-        echo X Python not found. Please install Python 3 to use search.
-        pause
-        goto MENU
+:: Pick the first Python candidate that actually runs.
+:: "where" alone is not enough: the Microsoft Store
+:: installs python3.exe/python.exe aliases that exist
+:: on disk but fail with exit 9009, so every candidate
+:: is verified with --version before being selected.
+set "PY_CMD="
+for %%C in (python3 python) do (
+    if not defined PY_CMD (
+        where %%C >nul 2>nul
+        if !errorlevel! equ 0 (
+            %%C --version >nul 2>nul
+            if !errorlevel! equ 0 set "PY_CMD=%%C"
+        )
     )
 )
-%PY_CMD% --version >nul 2>nul
-if !errorlevel! neq 0 (
+if not defined PY_CMD (
     echo X Python not found. Please install Python 3 to use search.
     pause
     goto MENU
@@ -237,8 +319,7 @@ if not exist "%~dp0iptv_search.py" (
     goto MENU
 )
 
-set "RESULT_FILE=%TEMP%\iptv_result_%RANDOM%.txt"
-if exist "%RESULT_FILE%" del "%RESULT_FILE%"
+call :GEN_RESULT_FILE
 
 :: Run the Python search engine interactively
 %PY_CMD% "%~dp0iptv_search.py" --threshold %FUZZY_THRESHOLD% --output-file "%RESULT_FILE%"
@@ -265,9 +346,13 @@ if "!PY_EXIT!" equ "0" (
     echo.
     echo No channels matched your search.
     timeout /t 2 >nul
+) else if "!PY_EXIT!" equ "3" (
+    echo.
+    echo No channel was selected.
+    timeout /t 2 >nul
 ) else (
     echo.
-    echo X Search engine failed (exit !PY_EXIT!).
+    echo X Search engine failed, exit code !PY_EXIT!.
     timeout /t 3 >nul
 )
 goto MENU
@@ -295,7 +380,7 @@ if defined check set "check=!check:8=!"
 if defined check set "check=!check:9=!"
 if defined check set "check=!check:.=!"
 if defined check (
-    echo Invalid value. Must be between 0.1 and 1.0 (e.g. 0.5, 0.75, 1.0)
+    echo Invalid value. Must be between 0.1 and 1.0 - e.g. 0.5, 0.75, 1.0
     timeout /t 2 >nul
     goto MENU
 )
@@ -303,7 +388,7 @@ if defined check (
 :: only [0-9.], so findstr cannot be fed metacharacters.
 echo !new_t!| findstr /r "^0\.[1-9][0-9]*$ ^1\.[0][0]*$ ^1$ ^\.[1-9][0-9]*$" >nul 2>nul
 if errorlevel 1 (
-    echo Invalid value. Must be between 0.1 and 1.0 (e.g. 0.5, 0.75, 1.0)
+    echo Invalid value. Must be between 0.1 and 1.0 - e.g. 0.5, 0.75, 1.0
     timeout /t 2 >nul
     goto MENU
 )
@@ -345,3 +430,15 @@ echo ========================================================================
 echo.
 pause
 goto MENU
+
+:: --------------------------------------------------
+:: SUBROUTINES
+:: --------------------------------------------------
+:: Generates a unique result-file name in RESULT_FILE.
+:: Two RANDOM values give ~1 billion combinations, and an
+:: existing name is never reused or deleted - a pre-existing
+:: file may belong to another running launcher instance.
+:GEN_RESULT_FILE
+set "RESULT_FILE=%TEMP%\iptv_result_%RANDOM%_%RANDOM%.txt"
+if exist "%RESULT_FILE%" goto GEN_RESULT_FILE
+goto :eof

@@ -2,6 +2,7 @@ import sys
 import os
 import argparse
 import difflib
+import hashlib
 import tempfile
 import time
 from urllib.parse import urlparse
@@ -13,15 +14,21 @@ MASTER_URL = "https://iptv-org.github.io/iptv/index.m3u"
 
 def _cache_file():
     """User-scoped cache path so accounts don't clash on shared systems."""
-    uid = ""
-    if hasattr(os, "getuid"):
-        uid = f"_{os.getuid()}"
-    return os.path.join(tempfile.gettempdir(), f"iptv_master_cache{uid}.m3u")
+    try:
+        uid = str(os.getuid())  # POSIX
+    except AttributeError:
+        # Windows has no os.getuid; fall back to a hash of the
+        # user profile path, which is unique per account.
+        home = os.path.expanduser("~")
+        uid = hashlib.sha256(
+            home.encode("utf-8", "surrogateescape")
+        ).hexdigest()[:12]
+    return os.path.join(tempfile.gettempdir(), f"iptv_master_cache_{uid}.m3u")
 
 CACHE_FILE = _cache_file()
 CACHE_EXPIRY = 3600 * 24  # 24 hours
 DOWNLOAD_TIMEOUT = 60  # seconds
-SCRIPT_VERSION = "0.1.7"
+SCRIPT_VERSION = "0.1.8"
 
 def _read_cache():
     """Read and return lines from cache if it exists, else None."""
@@ -55,7 +62,8 @@ def _is_valid_playlist(content):
         return False
     head = content.lstrip('\ufeff\r\n \t')
     first_line = head.split('\n', 1)[0].strip().upper()
-    if first_line != '#EXTM3U':
+    # The header may carry attributes, e.g. "#EXTM3U x-tvg-url=..."
+    if not first_line.startswith('#EXTM3U'):
         return False
     return any(
         line.lstrip().upper().startswith('#EXTINF')
@@ -226,6 +234,12 @@ def fuzzy_search(query, channels, threshold, limit):
     return results[:limit]
 
 
+# Exit-code contract (all shell launchers rely on this):
+#   0 = channel selected; URL written to --output-file (or stdout)
+#   1 = fatal error (download failed, invalid arguments)
+#   2 = no channels matched the query
+#   3 = no selection (user cancelled, EOF/Ctrl+C, or invalid selection)
+
 def main():
     parser = argparse.ArgumentParser(description="IPTV Channel Search Engine")
     parser.add_argument(
@@ -269,11 +283,12 @@ def main():
         try:
             args.query = input("\nEnter channel name to search: ").strip()
         except (EOFError, KeyboardInterrupt):
-            return
+            print()
+            sys.exit(3)
 
     if not args.query:
         print("X No search query provided.")
-        return
+        sys.exit(3)
 
     channels = download_m3u(force_refresh=args.force_refresh)
     print(f"[i] Loaded {len(channels)} channels")
@@ -293,10 +308,11 @@ def main():
     try:
         pick = input(f"\nSelect channel (1-{len(matches)}): ").strip()
     except (EOFError, KeyboardInterrupt):
-        return
+        print()
+        sys.exit(3)
 
     if not pick or pick == '0':
-        return
+        sys.exit(3)
 
     try:
         idx = int(pick) - 1
@@ -312,8 +328,10 @@ def main():
                 sys.stdout.flush()
         else:
             print("X Invalid selection.")
+            sys.exit(3)
     except ValueError:
         print("X Please enter a number.")
+        sys.exit(3)
 
 
 if __name__ == "__main__":

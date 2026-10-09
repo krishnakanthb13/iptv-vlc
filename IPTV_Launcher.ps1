@@ -5,7 +5,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 # --- CONFIGURATION ---
 $FuzzyThreshold = 0.7
-$ScriptVersion = "0.1.7"
+$ScriptVersion = "0.1.8"
 # ---------------------
 
 # Quick search: if a query was passed as argument, skip menu
@@ -41,8 +41,9 @@ if ($args.Count -gt 0) {
     } finally {
         if (Test-Path $resultFile) { Remove-Item $resultFile -ErrorAction SilentlyContinue }
     }
-    # Exit code 2 means "no matches" - treat as benign success
-    if ($pyExit -eq 2) { exit 0 }
+    # Exit codes 2 (no matches) and 3 (no selection) are
+    # benign outcomes for a CLI invocation - report success
+    if ($pyExit -eq 2 -or $pyExit -eq 3) { exit 0 }
     if ($pyExit -ne 0) { exit $pyExit }
     exit 0
 }
@@ -129,7 +130,7 @@ function Invoke-Search {
         & $pythonCmd.Source "$SearchScript" --threshold $tString --output-file "$resultFile"
         
         $pyExit = $LASTEXITCODE
-        if ($pyExit -ne 0 -and $pyExit -ne 2) {
+        if ($pyExit -ne 0 -and $pyExit -ne 2 -and $pyExit -ne 3) {
             Write-Host "`n[!] Search engine closed or failed (Exit Code: $pyExit)" -ForegroundColor Yellow
             Start-Sleep -Seconds 2
             return
@@ -137,6 +138,12 @@ function Invoke-Search {
         if ($pyExit -eq 2) {
             # No matches found - don't treat as failure
             Start-Sleep -Seconds 2
+            return
+        }
+        if ($pyExit -eq 3) {
+            # User cancelled or made an invalid selection
+            Write-Host "`nNo channel was selected." -ForegroundColor Yellow
+            Start-Sleep -Seconds 1
             return
         }
 

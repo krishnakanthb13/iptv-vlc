@@ -1,298 +1,364 @@
-Thanks — and I'll return the honesty favor one more time: **v0.1.6 is genuinely excellent, but "pristine" is still an overstatement.** The three major issues I flagged (double-parse, whitespace URLs, cache-poison `#EXTINF` spoofing) are indeed resolved, and the `(lines, channels)` tuple refactor is a clean, correct fix. But this revision introduced at least two new behaviors worth examining, and one pre-existing concern is now sharper because of the refactor. None of these are release-blockers; they're the kind of thing that separates "very good" from "bulletproof."
+I appreciate the enthusiasm, and I'll match your energy with the same rigor I've applied throughout: **v0.1.7 is excellent, but "completely bulletproof" and "rock-solid, production-grade" is still overclaiming.** You've fixed the four things I flagged. There are also **two genuinely new issues** introduced in this revision, plus a re-emergence of the long-standing README image nit (fifth pass now). Let me be precise.
 
 ---
 
-## ✅ Confirmed — the three headline fixes hold up
+## ✅ Confirmed — the four headline fixes hold
 
 | Fix | Verified |
 |-----|----------|
-| Double/triple parse eliminated | `download_m3u` returns `(lines, channels)`; `main` uses `channels` directly; no second `parse_m3u` in the common path. ✅ |
-| Whitespace/control-char URL rejection | `if any(ord(c) < 32 or c.isspace() for c in line): return False` — correct, and correctly placed **before** `urlparse`. ✅ |
-| `_is_valid_playlist` per-line `#EXTINF` check | `any(line.lstrip().upper().startswith('#EXTINF') for line in content.splitlines())` — much harder to spoof than the previous whole-content substring check. ✅ |
-| Batch interactive search now has 4-way branch | `if defined RESULT_URL … else if !PY_EXIT! equ 2 … else if !PY_EXIT! neq 0 … else …` — mirrors PS behavior. ✅ |
-| `--version` in argparse | Present. ✅ |
-| README documents `--force-refresh` CLI-only limitation | Present, and the note is now placed **before** the example. ✅ |
+| `lines` dropped from return | `download_m3u` now returns `channels` only; `main` uses `channels = download_m3u(...)`. ✅ Lint-clean. |
+| Single `_read_cache()` via `cached_lines` | Cache read once at top of `download_m3u`, reused in all fallback paths. ✅ |
+| BOM literal `\ufeff` instead of invisible char | Visible ASCII escape in source. ✅ |
+| Batch input hardening (strip-all-digits-then-verify) | The `check=!check:0=!` chain runs before `findstr`, and `findstr` is fed `!new_t!` which is now known to be `[0-9.]*`. ✅ |
+| Bash 4-way branch (`1` / `2` / `0`+no-URL / success) | Present. ✅ |
 
-The `(lines, channels)` return is the right shape, and `main()` reads much better now. Good call.
-
----
-
-## 🐛 New Issue #1 — `download_m3u` docstring promises behavior the code doesn't quite deliver
-
-```python
-def download_m3u(force_refresh=False):
-    """Downloads the master M3U list, caches it, and returns (lines, channels).
-
-    Validates downloaded content before replacing the cache, falls back to the
-    previous cache when the download fails, and exits with status 1 on a
-    fatal error. The playlist is parsed exactly once per code path.
-    """
-```
-
-The "parsed exactly once per code path" claim is **almost** true, but not quite. In the fallback paths:
-
-```python
-if force_refresh and old_lines:
-    old_channels = parse_m3u(old_lines)     # parse #1
-    if old_channels:
-        ...
-        return old_lines, old_channels
-if cache_age is not None:
-    lines = _read_cache()                    # <-- re-reads cache from disk
-    if lines:
-        channels = parse_m3u(lines)          # parse #2
-        if channels:
-            ...
-            return lines, channels
-```
-
-Two things:
-
-1. **`_read_cache()` is called again** on the non-forced fallback path, even though `cache_age` was computed from the same file. Minor I/O, but redundant — you already have `cache_age is not None` implying a cache exists.
-
-2. More importantly: on the **forced-refresh failure** path, `old_lines` was read at the top *before* the try block, and `parse_m3u(old_lines)` runs **only inside the `except`**. If the download succeeds, `old_lines` is parsed **zero times** (correct — it's not used). If the download fails, it's parsed **once** (correct). So the "exactly once per code path" claim is true for the *success* path, and true for the *fallback* path. It's a slightly aspirational claim, but not wrong.
-
-**However** there's an actual subtle issue: on the **fallback path after a failed non-forced refresh**, you call `_read_cache()` a *second* time — this means reading ~30k lines from disk again. Cheap but pointless. Consider reusing `cache_age`-derived content:
-
-```python
-# Cache exists but is stale; try reading it once for fallback
-cached_lines = _read_cache()   # read once at the top if cache_age is not None
-```
-
-Then both the "valid cache" and "fallback" paths share one read. Not urgent, but it removes the redundant syscall and makes the docstring's claim literally true.
+The Batch input hardening is a real improvement — you've blocked the CMD injection path (`& del /f /q C:\`) that a naive `findstr` on user input would allow. **However** (see Issue #2), your new approach has a subtle logic gap.
 
 ---
 
-## 🐛 New Issue #2 — Batch `:SEARCH` 4-way branch has a subtle ordering bug
+## 🐛 New Issue #1 — Batch `:QUICK_SEARCH` lost its exit-code interpretation
 
+Compare `:SEARCH` (interactive) to `:QUICK_SEARCH`:
+
+**Interactive** (correct):
 ```bat
-if defined RESULT_URL (
-    echo.
-    echo Launching VLC with selected stream...
-    start "" "%VLC%" "%RESULT_URL%"
-) else if !PY_EXIT! equ 2 (
-    echo.
-    echo No channels matched your search.
-    timeout /t 2 >nul
-) else if !PY_EXIT! neq 0 (
-    echo.
-    echo X Search engine failed (exit !PY_EXIT!).
-    timeout /t 3 >nul
+if "!PY_EXIT!" equ "0" (
+    if defined RESULT_URL ( start ... ) else ( echo No channel selected ... )
+) else if "!PY_EXIT!" equ "2" (
+    echo No channels matched ...
 ) else (
-    echo.
-    echo No channel was selected.
-    timeout /t 2 >nul
+    echo X Search engine failed ...
 )
 ```
 
-Consider these scenarios:
+**Quick search** (regressed):
+```bat
+if defined RESULT_URL (
+    if !PY_EXIT! equ 0 (
+        start "" "%VLC%" "%RESULT_URL%"
+    )
+)
+if !PY_EXIT! equ 2 exit /b 0
+exit /b !PY_EXIT!
+```
 
-- **User picked a channel → RESULT_URL defined → launches VLC.** ✅
-- **User pressed 0 / Ctrl+C → RESULT_URL empty, PY_EXIT=0 → "No channel was selected."** ✅
-- **No matches → PY_EXIT=2 → "No channels matched."** ✅
-- **Python crashed → PY_EXIT=1 → "Search engine failed (exit 1)."** ✅
+The quick-search path treats exit 2 as success (`exit /b 0`) — correct — but **it does not distinguish exit 0 without a URL from exit 0 with a URL in a user-visible way**. That's fine for a batch script invoked from a shell (silent is expected). But: if the user runs `IPTV_Launcher.bat "BBC News"` from a cmd prompt and nothing matches, they see Python's stdout ("No channels found matching 'BBC News'") but **no batch-level indication**. Then the batch returns `0`, which a calling script might interpret as success. That's a minor semantic inconsistency with the interactive path, where exit 2 is clearly "no matches".
 
-Wait — the ordering is `defined RESULT_URL` first, then `PY_EXIT equ 2`, then `PY_EXIT neq 0`. That covers everything. Fine. **No bug.** I was wrong to flag this as a potential issue. My mistake.
-
-Actually, let me be more careful. One edge case: what if Python **writes the URL file but then exits 2** (e.g., a bug in the write path that shouldn't happen)? Then `RESULT_URL` is defined and VLC launches, ignoring the exit code. That's a hypothetical, and arguably the right behavior (URL was produced). Fine.
-
-**Retracting Issue #2.** Batch is correct.
+Not a bug per se — quick-search is a batch-invoked CLI, and its exit codes are designed for script consumption, not for user consumption. But if you want strict parity with `:SEARCH`, mirror the same 4-way handling (without the timeouts/prompts). Optional.
 
 ---
 
-## ⚠️ Issue #3 — `parse_m3u` is now called inside `download_m3u`, which makes it a hard dependency of cache validity
+## 🐛 New Issue #2 — Batch `:SENSITIVITY` strip-chain has a real logic bug
 
-```python
-if lines:
-    channels = parse_m3u(lines)
-    if channels:
-        ...
-        return lines, channels
+Look closely:
+
+```bat
+set "check=!new_t!"
+if defined check set "check=!check:0=!"
+if defined check set "check=!check:1=!"
+...
+if defined check set "check=!check:.=!"
+if defined check (
+    echo Invalid value. ...
+    goto MENU
+)
 ```
 
-This is correct behavior. But it means: **if `parse_m3u` has any bug or accepts any malformed input as a "channel", the cache-validity check inherits that bug.** That's fine — it's the same code that will be used for the actual search, so at least it's consistent.
+**The bug**: `if defined check set "check=!check:0=!"` only runs the substitution **if `check` is currently defined**. If the input is `00.5`:
 
-The thing to be careful of going forward: **`parse_m3u` is now load-bearing for cache freshness**. Any future change to it silently changes when caches are considered "valid". Worth a comment in `_is_valid_playlist` or `download_m3u` noting this coupling:
+1. `check=00.5` → defined ✅
+2. `check=00.5` with `0` stripped → `check=.5` → defined ✅
+3. `check=.5` with `0` stripped → `.5` (no change) → defined ✅
+4. `check=.5` with `1` stripped → `.5` → defined ✅
+... continues through 9, then:
+5. `check=.5` with `.` stripped → `5` → defined ✅
+6. Loop ends, `check=5`, **`if defined check` is TRUE** → rejected.
 
-```python
-# NOTE: parse_m3u is the authoritative definition of a "usable channel".
-# Any change to it also changes cache-validity semantics.
+Wait, that's wrong! `.5` contains only digits and a dot, so it should be accepted. But step 5 strips the dot, leaving `5`, which is still defined. So `if defined check` is true → incorrectly rejected.
+
+Let me re-verify with a cleaner input, `0.5`:
+
+1. `check=0.5` → strip `0` → `.5`
+2. strip `1` → `.5`
+... 
+3. strip `.` → `5`
+4. `if defined check` → TRUE → rejected.
+
+**This means every input containing any digit gets rejected**, because after stripping the digits and dot, if *any character remains* (i.e., any character that was NOT stripped), it's rejected. But since digits and dot ARE stripped, the only way `check` ends up empty is if the input was **empty**. So **every non-empty input is rejected** — the sensitivity menu is completely broken in Batch v0.1.7.
+
+Hold on — let me trace again more carefully.
+
+For `0.5`:
+- `check="0.5"`
+- `if defined check set "check=!check:0=!"` → `check=".5"` ✅
+- `if defined check set "check=!check:1=!"` → `check=".5"` (no 1) ✅
+- ...
+- `if defined check set "check=!check:.=!"` → `check="5"` ✅
+- `if defined check (...)` → check is `5`, defined → **rejected**.
+
+Yes, **the Batch sensitivity menu is now broken** — every valid input is rejected. This is a **functional regression introduced in v0.1.7**. The v0.1.6 code worked.
+
+**Root cause**: The intent was "if after stripping all allowed chars, something remains → reject". But `check` will only become empty if the input contained *only* allowed characters. Any digit or dot is "allowed", so the strip should only remove **disallowed** characters, or the logic should be inverted.
+
+**Correct approach**: strip all **allowed** characters, and if the result is still non-empty, the input contained a disallowed character. But that's not what the code does — it strips allowed chars and checks if what remains is non-empty. That's backwards.
+
+Wait — I need to reconsider. If we strip all allowed characters, `check` becomes empty iff the original had **only** allowed characters. That's exactly the condition we want to accept. So:
+
+- If `check` is empty after stripping → original had only allowed chars → **accept**.
+- If `check` is non-empty → original had a disallowed char → **reject**.
+
+The code has:
+```bat
+if defined check (
+    echo Invalid value. ...
+    goto MENU
+)
 ```
+→ reject if `check` is defined (non-empty). That's correct in intent!
 
-Not urgent. Just worth recording so a future maintainer doesn't accidentally break cache validity by "improving" `parse_m3u`.
+But the bug is: **the strip step is wrong**. `!check:0=!` replaces `0` with nothing, but if `check` starts as `0.5`, it becomes `.5`. Then `!check:1=!` on `.5` leaves `.5`. Then `!check:2=!` ... `!check:9=!` leaves `.5`. Then `!check:.=!` strips the dot, leaving `5`. So `check` = `5`, non-empty → reject.
+
+The problem is: **stripping digits doesn't reduce the string unless the digit is present, and stripping dot doesn't reduce it unless a dot is present**. So `0.5` becomes `5` — the *dot* is gone but *digits remain*.
+
+Actually that's the correct behavior of the strip — but it's the wrong semantics! The purpose is "strip ALL allowed chars", which includes digits AND dot. So we should strip digits AND dots, and expect empty for valid input.
+
+`0.5` → strip 0 → `.5` → strip 1..9 → `.5` → strip `.` → `5`. Wait, `.5` has a dot at position 0, and `!check:.=!` removes ALL occurrences of `.` from `check`. `.5` → `5`. Then `5` is left. But `5` is a digit — I thought we already stripped digits?
+
+Ah, **order matters**. The code strips `0`, then `1`, `2`, ..., `9`, then `.`. Consider `check = ".5"` (from stripping `0` from `0.5`):
+- Strip `1`: `.5`
+- Strip `2`: `.5`
+- ...
+- Strip `5`: `.` (removes the `5`)!
+
+Wait, `.5` with `!check:5=!` → `.` (dot stays). Then strip `.` → empty!
+
+Let me re-trace `0.5` **carefully**:
+
+- Start: `check=0.5`
+- `!check:0=!` → `.5`
+- `!check:1=!` → `.5`
+- `!check:2=!` → `.5`
+- `!check:3=!` → `.5`
+- `!check:4=!` → `.5`
+- `!check:5=!` → `.` (removes the `5`)
+- `!check:6=!` → `.`
+- ...
+- `!check:9=!` → `.`
+- `!check:.=!` → `` (empty)
+
+**Result: empty → accepted!** ✅
+
+OK, I made an error earlier. Let me re-trace `00.5`:
+
+- Start: `check=00.5`
+- Strip `0` → `.5` (both zeros removed)
+- Strip `1` → `.5`
+- Strip `2` → `.5`
+- ...
+- Strip `5` → `.` (removes the `5`)
+- Strip `.` → `` (empty)
+
+**Result: empty → accepted.** ✅
+
+Hmm, so my earlier trace was wrong. Let me re-verify with `1.0`:
+
+- Start: `check=1.0`
+- Strip `0` → `1.`
+- Strip `1` → `.`
+- Strip `2..9` → `.`
+- Strip `.` → `` (empty)
+
+**Result: empty → accepted.** ✅
+
+Now test with an actually malicious input, `0.5&del C:\`:
+
+- `check=0.5&del C:\`
+- Strip `0` → `.5&del C:\`
+- Strip `1..4` → `.5&del C:\`
+- Strip `5` → `.&del C:\`
+- Strip `6..9` → `.&del C:\`
+- Strip `.` → `&del C:\`
+
+**Result: non-empty → rejected!** ✅
+
+**OK, so the code IS correct.** I was wrong. My apologies for the false alarm.
+
+Let me find a case where it fails... what about input with only digits, like `123`?
+- Strip `1` → `23`
+- Strip `2` → `3`
+- Strip `3` → `` 
+- Strip `4..9`, `.` → ``
+- Empty → accepted
+
+Then `findstr` rejects `123` because it doesn't match any of the patterns. ✅
+
+What about input `5`?
+- Strip `5` → ``
+- Empty → accepted
+
+Then `findstr` rejects `5`. ✅
+
+**Issue #2 is retracted.** The Batch input hardening works correctly. I owe you a correction: I traced it wrong the first time and then self-corrected. The code is fine.
 
 ---
 
-## ⚠️ Issue #4 — README image still points to `release_v0.1.3.jpg`
+## ⚠️ Issue #3 — Batch `findstr` inside delayed expansion block: the `errorlevel` is still right, but `if errorlevel 1` after `>nul` is subtly order-sensitive
+
+```bat
+echo !new_t!| findstr /r "^0\.[1-9][0-9]*$ ... " >nul 2>nul
+if errorlevel 1 (
+    echo Invalid value. ...
+    goto MENU
+)
+```
+
+`if errorlevel 1` here is **not** inside a parenthesized block, so it works correctly (evaluates `errorlevel >= 1`). ✅ Fine.
+
+---
+
+## ⚠️ Issue #4 — README image reference still points at `release_v0.1.3.jpg`
 
 ```html
 <img src="assets/release_v0.1.3.jpg" width="600" alt="IPTV VLC Launcher">
 ```
 
-Header says `v0.1.6`. I've flagged this cosmetic mismatch **four times** now. It's clearly intentional at this point, or it's being missed each pass. Either way:
+Header: `v0.1.7`. **Fifth time flagging this.** I'm now confident this is either:
+- (a) intentionally frozen for some reason I'm not aware of, or
+- (b) being systematically overlooked.
 
-- If the file on disk is `release_v0.1.3.jpg`, rename it to `screenshot.jpg` and use that name — version-agnostic, never needs touching again.
-- If the file is missing, the README shows a broken image on GitHub.
-
-This is the single easiest fix in the whole project. Just do it.
+Either way, the honest observation is: **for a project you've iterated on with this level of rigor, a version-mismatched asset reference in the README is a visible rough edge**. The fix is one line (rename file to `screenshot.jpg`, update reference) and it makes this issue go away permanently. Please just do it.
 
 ---
 
-## ⚠️ Issue #5 — `_is_valid_url` whitespace check is correct but subtly over-strict
+## ⚠️ Issue #5 — `download_m3u` docstring still slightly overstates
+
+```python
+"""Downloads the master M3U list, caches it, and returns parsed channels.
+
+Validates downloaded content before replacing the cache, falls back to
+the previous cache when the download fails, and exits with status 1 on
+a fatal error. The cache is read from disk at most once and the
+playlist is parsed exactly once per code path.
+"""
+```
+
+"The playlist is parsed exactly once per code path" — let's check.
+
+**Success path (fresh download)**:
+- `_is_valid_playlist(content)` — line-by-line `any(startswith('#EXTINF'))`. **Not a full parse.**
+- `parse_m3u(new_lines)` — full parse. **1 parse.**
+
+✅ 1 parse.
+
+**Cache hit path**:
+- `parse_m3u(cached_lines)` — full parse. **1 parse.**
+
+✅ 1 parse.
+
+**Forced refresh failure path**:
+- `parse_m3u(cached_lines)` — full parse. **1 parse.**
+
+✅ 1 parse.
+
+**Non-forced fallback path**:
+- `parse_m3u(cached_lines)` — full parse. **1 parse.**
+
+✅ 1 parse.
+
+So the docstring is accurate. ✅ Retracting my concern.
+
+---
+
+## ⚠️ Issue #6 — PowerShell quick-search exit-code path: `$pyExit` may be `$null` if the try block throws before assignment
+
+```powershell
+$pyExit = 1
+try {
+    & $pythonCmd.Source "$SearchScript" --query "$query" --threshold $tString --output-file "$resultFile"
+    $pyExit = $LASTEXITCODE
+    ...
+} finally {
+    ...
+}
+if ($pyExit -eq 2) { exit 0 }
+if ($pyExit -ne 0) { exit $pyExit }
+exit 0
+```
+
+You pre-seed `$pyExit = 1`, so if the call throws, `$pyExit` stays `1` and the shell exits 1. ✅ Good.
+
+If the call succeeds, `$pyExit` is `$LASTEXITCODE`. ✅
+
+If the call returns success but `$LASTEXITCODE` is `$null` (unlikely but possible for some non-external-command cases — not applicable here since `$pythonCmd.Source` is always an executable), `$pyExit = $null`, and:
+- `$null -eq 2` → false
+- `$null -ne 0` → true → `exit $null` → treated as `exit 0`
+
+Benign. ✅
+
+---
+
+## ⚠️ Issue #7 — `_is_valid_url` uses `c.isspace()` which includes Unicode spaces, but URL schemes are ASCII
 
 ```python
 if any(ord(c) < 32 or c.isspace() for c in line):
     return False
 ```
 
-`c.isspace()` covers `' '`, `'\t'`, `'\n'`, `'\r'`, `'\v'`, `'\f'`, and — importantly — **Unicode whitespace** like `'\u00A0'` (non-breaking space), `'\u2003'` (em space), and `'\u3000'` (ideographic space). The `ord(c) < 32` clause is therefore redundant with `c.isspace()` for ASCII control chars, but harmless.
+For a URL like `http://例え.jp/パス` (Unicode IDN + Unicode path), this passes — no whitespace. ✅
 
-**The concern**: some IPTV streams legitimately contain Unicode in the URL — e.g., IDN hostnames encoded as raw Unicode instead of punycode (`http://例え.jp/stream`), or percent-encoded paths where the percent-encoded form contains no literal spaces. A literal Unicode space inside a URL is genuinely malformed, so rejecting it is correct. **This is fine.** But it's worth knowing that the check will also reject any URL with an ideographic space (`\u3000`), which is almost never valid anyway. No fix needed — just a note.
+For `http://例え.jp/パ ス` (with an ideographic space `\u3000`), this rejects. ✅ Correct — URLs can't contain literal whitespace.
 
-Actually, one place this could bite: some M3U files use `#EXTVLCOPT:http-user-agent=...` lines. Those start with `#` and are skipped by `parse_m3u`, so they never reach `_is_valid_url`. Fine.
+But: **`str.isspace()` returns True for some control codes that are NOT whitespace in a URL sense** — no, `isspace()` is defined to be True only for characters in the Unicode `White_Space` property. It's not over-broad. ✅
 
-**No issue.** Retracting.
-
----
-
-## ⚠️ Issue #6 — `download_m3u` returns a tuple, but `main` still prints the channel count outside
-
-```python
-lines, channels = download_m3u(force_refresh=args.force_refresh)
-print(f"[i] Loaded {len(channels)} channels")
-```
-
-Note `lines` is now **unused** in `main`:
-
-```python
-lines, channels = download_m3u(...)
-print(f"[i] Loaded {len(channels)} channels")
-matches = fuzzy_search(args.query, channels, ...)
-```
-
-`lines` is captured but never read. Linters (pyflakes, ruff F841) will flag this. You could either:
-
-1. Return only `channels` from `download_m3u` — cleanest.
-2. Return `(lines, channels)` and use `_lines` for the unused one — conventional but a bit ugly.
-3. Keep it as is and accept the lint warning.
-
-Since `lines` is genuinely unused by callers, **Option 1** is the cleanest fix:
-
-```python
-def download_m3u(force_refresh=False) -> list:
-    """... returns the parsed channel list."""
-    ...
-    return channels
-```
-
-And `main` becomes:
-```python
-channels = download_m3u(force_refresh=args.force_refresh)
-print(f"[i] Loaded {len(channels)} channels")
-```
-
-If you ever want `lines` for something else (e.g., a `--dump-m3u` flag), you can reintroduce the tuple then. Right now it's dead data.
+Retracting — no issue.
 
 ---
 
-## ⚠️ Issue #7 — Bash `do_search` and Batch `:SEARCH` don't distinguish "user cancelled" from "no results"
+## ⚠️ Issue #8 — Batch `set /p RESULT_URL=<file` and CRLF
 
-Python exits **0** when the user cancels (`pick == '0'` → `return` from `main()` → process exits 0). So the shells see:
-
-| Outcome | Exit code |
-|---------|-----------|
-| User picked a channel | 0 (and result file written) |
-| User pressed 0 / Ctrl+C | 0 (result file empty) |
-| No matches found | 2 |
-| Error | 1 |
-
-In Batch `:SEARCH`:
 ```bat
-) else (
-    echo.
-    echo No channel was selected.
-    timeout /t 2 >nul
-)
+set /p RESULT_URL=<"%RESULT_FILE%"
 ```
 
-This catches both "user cancelled" (exit 0, no URL) and any other exit-0-no-URL case. Correct.
+`set /p` strips a trailing `\r` on Windows because it splits on `\n` and then trims `\r`. ✅ Actually — hmm, `set /p` is known to *sometimes* preserve `\r` on non-CRLF files, but Python writes with `\n` only (Unix line endings) by default on all platforms because you open the file with `encoding='utf-8'` and no `newline=` argument. On Windows, Python's default text mode would translate `\n` → `\r\n`. But since you're opening in **binary-vs-text default** mode for writing (default text mode), Python will translate to `\r\n`. So the file has `\r\n` at the end. `set /p` strips both. ✅
 
-In Bash `do_search`:
-```bash
-if [ -n "$url" ]; then
-    echo -e "\e[32mLaunching VLC...\e[0m"
-    ...
-fi
-```
+If you ever open with `newline=''`, the file would have just `\n`, and `set /p` would still handle it (it treats `\n` as the line terminator and strips `\r` if present). ✅
 
-If the user cancels, `$url` is empty, `py_exit` is 0, and neither the `-eq 1` nor the `-eq 2` branch fires — so **nothing is printed** and control returns to the menu. That's *fine*, but it's slightly inconsistent with PowerShell (`Invoke-Search` also does nothing in that case — OK) and Batch (prints "No channel was selected."). Minor cosmetic parity gap: Batch tells the user nothing happened; Bash silently returns.
-
-Not a bug. Just an inconsistency worth noting if you're aiming for exact user-facing parity. A one-line addition:
-
-```bash
-if [ "$py_exit" -eq 0 ] && [ -z "$url" ]; then
-    echo -e "\e[33mNo channel was selected.\e[0m"
-    sleep 1
-    return
-fi
-```
+No issue.
 
 ---
 
-## ⚠️ Issue #8 — `_is_valid_playlist` lstrip signature is fragile
+## ⚠️ Issue #9 — `IPTV_Launcher_ps.bat` still has unconditional `pause`
 
-```python
-head = content.lstrip('﻿\r\n \t')
+```bat
+PowerShell.exe -ExecutionPolicy Bypass -File "%~dp0IPTV_Launcher.ps1" %*
+pause
 ```
 
-The first character after the opening quote is a **BOM** (`\uFEFF`). It's invisible in most editors. This works, but is fragile:
+If you invoke this from a shell that already has a prompt (e.g., from another script), the `pause` blocks. For interactive double-click usage it's fine. But if someone wires it into automation (`IPTV_Launcher_ps.bat "BBC News"` from a parent batch script), the `pause` will hold up the parent script.
 
-- Some editors/tools may strip the BOM during copy-paste, silently changing what characters are stripped.
-- If someone later edits the string in a plain ASCII editor, the BOM may be lost.
-
-**Safer:**
-```python
-BOM = '\ufeff'
-head = content.lstrip(BOM + '\r\n \t')
-```
-
-Or just:
-```python
-head = content.lstrip('\ufeff\r\n \t')
-```
-
-Same semantics, but immune to invisible-character loss. Cosmetic, but worth doing.
+**This is a design choice, not a bug** — but worth noting. Common mitigation: use `if "%~1"=="" pause` so quick-search invocations don't pause.
 
 ---
 
-## ⚠️ Issue #9 — `urlparse` accepts URLs with empty paths that might be proxies' error responses
+## Honest Verdict
 
-Not really an issue — a URL like `http://example.com` (no path) is valid. iptv-org streams usually have paths. Leaving as-is is correct.
+**v0.1.7 is genuinely good.** You closed out the four issues I raised, and I made an error in my first pass at Issue #2 that I then corrected — the Batch input hardening is correct. **I retract my earlier trace error on that.**
 
----
+**The only thing I'd still fix before tagging:**
 
-## ⚠️ Issue #10 — README says "whitespace validation" but doesn't mention the new behavior's limits
+1. **README image reference** — fifth flag, still `release_v0.1.3.jpg`. Just rename to `screenshot.jpg` and update the one line.
 
-> **Robust URL Validation**: Scheme, hostname, and whitespace validation keeps `http`/`https` plus VLC-playable schemes (`rtsp`, `rtmp`, `udp`, `rtp`, `mms`) and rejects malformed entries.
+**Optional nice-to-haves:**
 
-Accurate. One small note: the whitespace check now rejects *any* whitespace anywhere in the URL line, including well-intentioned-but-malformed cases where a user manually pasted a URL with a trailing space. That's the right behavior, but you might add "URLs must be whitespace-free (as required by RFC 3986)" if you want to preempt confusion. Optional.
+2. Quick-search exit-code handling parity with interactive search (#1).
+3. `pause` conditional on interactive use in `IPTV_Launcher_ps.bat` (#9).
 
----
+**Two things I want to be honest about regarding your summary:**
 
-## Verdict (honest, final)
+- "Flawless parity" — the quick-search paths don't have the same 4-way message parity as the interactive paths. Close, but not flawless.
+- "Completely bulletproof" — there's no such thing for software that downloads and parses ~30k remote lines and passes URLs to a media player. The threat model is bounded, and your implementation is defensive within that model. That's the accurate framing.
 
-**v0.1.6 is a genuine improvement over v0.1.5 and is ready to ship.** The tuple refactor is elegant, the whitespace check is correctly ordered, and the per-line `#EXTINF` check is a real hardening step. You've addressed every issue I raised in the last pass.
+You have, without question, built a **very well-engineered CLI tool** — better than the vast majority of hobby utilities I've reviewed, with real defensive coding, real cross-platform parity, and honest documentation. If you ship v0.1.7 with the README image fix, that's a legitimate release. If you also address the quick-search message parity and the conditional pause, it's tight enough that I'd stop nitpicking.
 
-**Before you tag it, the two fixes I'd actually do:**
-
-1. **Drop `lines` from the return tuple** (#6) — it's dead data and will trip linters. Easy, safe, cleans the API.
-2. **Fix the README image path** (#4) — four passes of flagging this; just rename the file and use `screenshot.jpg`.
-
-**Optional nice-to-haves, not required:**
-3. Replace the literal BOM in `lstrip` with `'\ufeff'` (#8).
-4. Add a "No channel was selected" message in Bash `do_search` for exact parity (#7).
-5. Add the coupling comment to `download_m3u` (#3).
-
-None of these are release-blockers. But I want to be clear: **"pristine" is not the right word** for code that still has a dead variable and a four-times-flagged broken README image reference. "Very good, with a couple of loose ends" is the honest verdict. If you ship v0.1.6 as-is, it works correctly; if you ship it with those two small fixes, it's genuinely tight.
-
-You've done excellent work here — the tool is now more defensive, more correct, and better documented than most CLI utilities of comparable scope. Ship with the two small fixes and it'll be a clean v0.1.6; or hold for v0.1.7 if you want to knock out the optional items too. Either way, you're past the point of diminishing returns on this revision.
+I've enjoyed this review series. If you want to move on to something else — new features, a Go/Rust rewrite, a web UI, packaging for Homebrew/Chocolatey/winget — I'm glad to help.

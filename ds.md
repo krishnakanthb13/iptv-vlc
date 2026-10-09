@@ -1,231 +1,298 @@
-Thanks — I appreciate the thoroughness of your write-up, but let me be equally honest in the other direction: **v0.1.5 is very good, but "pristine" and "bulletproof" overstate it**. There are a couple of genuine issues introduced in this revision, one of which is a subtle behavioral regression. I'd rather flag them than cheerlead.
+Thanks — and I'll return the honesty favor one more time: **v0.1.6 is genuinely excellent, but "pristine" is still an overstatement.** The three major issues I flagged (double-parse, whitespace URLs, cache-poison `#EXTINF` spoofing) are indeed resolved, and the `(lines, channels)` tuple refactor is a clean, correct fix. But this revision introduced at least two new behaviors worth examining, and one pre-existing concern is now sharper because of the refactor. None of these are release-blockers; they're the kind of thing that separates "very good" from "bulletproof."
 
 ---
 
-## 🐛 Real Issue #1 — `_has_usable_channels` is expensive and runs on every cache read
+## ✅ Confirmed — the three headline fixes hold up
 
-```python
-def _has_usable_channels(lines):
-    return bool(parse_m3u(lines))
-```
+| Fix | Verified |
+|-----|----------|
+| Double/triple parse eliminated | `download_m3u` returns `(lines, channels)`; `main` uses `channels` directly; no second `parse_m3u` in the common path. ✅ |
+| Whitespace/control-char URL rejection | `if any(ord(c) < 32 or c.isspace() for c in line): return False` — correct, and correctly placed **before** `urlparse`. ✅ |
+| `_is_valid_playlist` per-line `#EXTINF` check | `any(line.lstrip().upper().startswith('#EXTINF') for line in content.splitlines())` — much harder to spoof than the previous whole-content substring check. ✅ |
+| Batch interactive search now has 4-way branch | `if defined RESULT_URL … else if !PY_EXIT! equ 2 … else if !PY_EXIT! neq 0 … else …` — mirrors PS behavior. ✅ |
+| `--version` in argparse | Present. ✅ |
+| README documents `--force-refresh` CLI-only limitation | Present, and the note is now placed **before** the example. ✅ |
 
-This is called:
-1. On cache read (hot path, every launch).
-2. After every successful download.
-
-`parse_m3u` iterates all ~30k lines, strips each, calls `_extinf_title` (which loops char-by-char through every `#EXTINF` line), calls `_is_valid_url` (which constructs a `urlparse` object per URL). On a modern CPU that's **roughly 0.3–1.5 seconds per call**, and you now pay it:
-
-- Once to validate the cache on read.
-- Once inside `download_m3u` on fresh download.
-- Then `main()` calls `parse_m3u(lines)` **again** on the returned `lines`.
-
-So on a cached launch you're parsing the full playlist **twice** before the user sees a single result. On a fresh download you're parsing **three times** (validate new, validate returned to caller, parse in main).
-
-**This is a measurable regression** versus v0.1.4, which parsed once. The startup cost of the search path just doubled or tripled.
-
-**Recommended fix:** validate cheaply, parse once.
-
-Option A — cheap structural check for cache reads, full parse only on download:
-```python
-def _has_usable_channels(lines):
-    """Cheap structural check: is there at least one EXTINF + URL pair?"""
-    seen_extinf = False
-    for line in lines:
-        s = line.strip()
-        if s.startswith("#EXTINF"):
-            seen_extinf = True
-        elif seen_extinf and s and not s.startswith("#"):
-            return True
-    return False
-```
-
-Option B — parse once and pass the parsed list around:
-```python
-lines = download_m3u(...)
-channels = parse_m3u(lines)
-```
-and have `download_m3u` return the parsed `channels` (or a `(lines, channels)` tuple) so `main()` doesn't re-parse. This is the cleaner long-term design.
-
-Either way, the current code pays the full parse cost more times than necessary.
+The `(lines, channels)` return is the right shape, and `main()` reads much better now. Good call.
 
 ---
 
-## 🐛 Real Issue #2 — `--version` interacts badly with the argparse `SystemExit` remap
-
-```python
-parser.add_argument("--version", action="version", version=f"iptv_search {SCRIPT_VERSION}")
-...
-try:
-    args = parser.parse_args()
-except SystemExit as e:
-    sys.exit(1 if e.code == 2 else e.code)
-```
-
-`argparse`'s `version` action calls `parser.exit()` with **code 0**, so `--version` still works correctly (the remap preserves `0`). ✅
-
-**But**: `-h`/`--help` also exits with code 0, which is fine. The problem is the remap now can't distinguish "argparse exited 0 for help/version" from "argparse exited 0 because... something else?" — which isn't a real scenario today, but the remap is now doing more work than it should:
-
-- `2` → `1` (usage error → generic error)
-- `0` → `0` (help/version → success)
-- anything else → pass through
-
-That's actually correct. **However**, the documented convention "2 = no matches" is now conflated with argparse's own `2`, which you handle. Fine. Just noting the remap is load-bearing and worth a comment above the `try` block. Currently the comment is inside the `except`, which is a bit late for a reader scanning the code.
-
-Minor, but worth moving:
-```python
-# argparse uses exit code 2 for usage errors; we reserve 2 for "no matches",
-# so remap argparse's 2 -> 1 before it can leak out.
-try:
-    args = parser.parse_args()
-except SystemExit as e:
-    sys.exit(1 if e.code == 2 else e.code)
-```
-
----
-
-## ⚠️ Issue #3 — Batch `findstr` regex: the `|` spacing claim is wrong
-
-You wrote:
-> Findstr `|` spacing: Your empirical testing of `echo %new_t%| findstr` over adding the space is the exact kind of deep-dive testing...
-
-But look at the actual batch code:
-
-```bat
-echo %new_t%| findstr /r "^0\.[1-9][0-9]*$ ^1\.[0][0]*$ ^1$ ^\.[1-9][0-9]*$" >nul 2>nul
-```
-
-There is **no `|` inside the regex string**. The `|` you see is the *shell pipe* between `echo %new_t%` and `findstr`. The alternation inside `findstr /r "A B C D"` is **space-separated**, not pipe-separated — that's `findstr`'s quirk, and it's correct here. So the "empirical testing of `|` spacing" framing is a misread of the code. The regex itself is fine.
-
-However, there **is** a real issue with the regex: `^1\.[0][0]*$`
-
-- `1.0` → matches ✅
-- `1.00` → matches ✅
-- `1.000` → matches ✅
-- `1.` → no ✅
-- `1.01` → no ✅ (correct, `1.01 > 1.0`)
-
-But `^1$` and `^1\.[0][0]*$` don't cover `1.0000001`, which is fine to reject. **No bug.** Just fix the comment in the review, not the code.
-
----
-
-## ⚠️ Issue #4 — Bash `.5` normalization happens after the regex already accepted it
-
-```bash
-if [[ "$t" =~ ^0?\.[1-9][0-9]*$|^1(\.0+)?$ ]]; then
-    # Normalize ".5" style input to "0.5"
-    [[ "$t" == .* ]] && t="0$t"
-    FUZZY_THRESHOLD=$t
-```
-
-The regex `^0?\.[1-9][0-9]*$` accepts both `0.5` and `.5`. The normalization then turns `.5` → `0.5`. ✅
-
-But the regex also accepts `0.5` — normalization leaves it alone (doesn't start with `.`). ✅
-
-**However**, note the regex **does not** accept `00.5`, `0.50` (fine), or `1.0000000` (matches `^1(\.0+)?$` — accepted). All fine.
-
-**No bug.** Cosmetic only: the normalization could be folded into the validation with a single regex capture group, but the current two-step is clear enough.
-
----
-
-## ⚠️ Issue #5 — README image is still `release_v0.1.3.jpg`
-
-```
-<img src="assets/release_v0.1.3.jpg" width="600" alt="IPTV VLC Launcher">
-```
-
-Header says `v0.1.5`. I flagged this exact cosmetic mismatch twice. It's not a bug, but the file is either:
-- Actually named `release_v0.1.3.jpg` on disk (in which case: rename it once and use a version-agnostic name like `screenshot.jpg`).
-- Or a broken link (in which case, fix it).
-
-Third time's the charm — just fix it or make it version-agnostic.
-
----
-
-## ⚠️ Issue #6 — `_is_valid_playlist` checks `#EXTINF` in the whole content, not per-line
-
-```python
-return '#EXTINF' in content.upper()
-```
-
-If a captive portal serves an HTML page that happens to contain the literal string `#EXTINF` anywhere (e.g., in a code sample, a JS string, a comment), this check passes. Extremely unlikely, but the check is weaker than it looks. The subsequent `_has_usable_channels` catches this, so the combined defense is solid — but if you ever drop `_has_usable_channels` for performance (see Issue #1), this becomes a real hole.
-
-Suggested tightening:
-```python
-return any(line.lstrip().upper().startswith('#EXTINF') for line in content.splitlines())
-```
-Still O(n) but only on fresh downloads, and much harder to spoof.
-
----
-
-## ⚠️ Issue #7 — `download_m3u` docstring is stale
+## 🐛 New Issue #1 — `download_m3u` docstring promises behavior the code doesn't quite deliver
 
 ```python
 def download_m3u(force_refresh=False):
-    """Downloads the master M3U list and caches it to disk for 24 hours."""
+    """Downloads the master M3U list, caches it, and returns (lines, channels).
+
+    Validates downloaded content before replacing the cache, falls back to the
+    previous cache when the download fails, and exits with status 1 on a
+    fatal error. The playlist is parsed exactly once per code path.
+    """
 ```
 
-It now also validates, atomically writes, falls back, and can `sys.exit(1)`. The docstring should mention the validation and fallback behavior — especially because the `sys.exit(1)` is a surprising side effect for a function named "download".
+The "parsed exactly once per code path" claim is **almost** true, but not quite. In the fallback paths:
+
+```python
+if force_refresh and old_lines:
+    old_channels = parse_m3u(old_lines)     # parse #1
+    if old_channels:
+        ...
+        return old_lines, old_channels
+if cache_age is not None:
+    lines = _read_cache()                    # <-- re-reads cache from disk
+    if lines:
+        channels = parse_m3u(lines)          # parse #2
+        if channels:
+            ...
+            return lines, channels
+```
+
+Two things:
+
+1. **`_read_cache()` is called again** on the non-forced fallback path, even though `cache_age` was computed from the same file. Minor I/O, but redundant — you already have `cache_age is not None` implying a cache exists.
+
+2. More importantly: on the **forced-refresh failure** path, `old_lines` was read at the top *before* the try block, and `parse_m3u(old_lines)` runs **only inside the `except`**. If the download succeeds, `old_lines` is parsed **zero times** (correct — it's not used). If the download fails, it's parsed **once** (correct). So the "exactly once per code path" claim is true for the *success* path, and true for the *fallback* path. It's a slightly aspirational claim, but not wrong.
+
+**However** there's an actual subtle issue: on the **fallback path after a failed non-forced refresh**, you call `_read_cache()` a *second* time — this means reading ~30k lines from disk again. Cheap but pointless. Consider reusing `cache_age`-derived content:
+
+```python
+# Cache exists but is stale; try reading it once for fallback
+cached_lines = _read_cache()   # read once at the top if cache_age is not None
+```
+
+Then both the "valid cache" and "fallback" paths share one read. Not urgent, but it removes the redundant syscall and makes the docstring's claim literally true.
 
 ---
 
-## ⚠️ Issue #8 — `_has_usable_channels` on cache read is called even when the cache is clearly stale
+## 🐛 New Issue #2 — Batch `:SEARCH` 4-way branch has a subtle ordering bug
 
-```python
-if not force_refresh:
-    if cache_age is not None and cache_age * 3600 < CACHE_EXPIRY:
-        lines = _read_cache()
-        if lines and _has_usable_channels(lines):
+```bat
+if defined RESULT_URL (
+    echo.
+    echo Launching VLC with selected stream...
+    start "" "%VLC%" "%RESULT_URL%"
+) else if !PY_EXIT! equ 2 (
+    echo.
+    echo No channels matched your search.
+    timeout /t 2 >nul
+) else if !PY_EXIT! neq 0 (
+    echo.
+    echo X Search engine failed (exit !PY_EXIT!).
+    timeout /t 3 >nul
+) else (
+    echo.
+    echo No channel was selected.
+    timeout /t 2 >nul
+)
 ```
 
-Good — the `_has_usable_channels` call is gated on cache being unexpired. ✅ But if the cache **is** expired, you skip validation and go straight to download, only to fall back to cache if download fails — and *then* validate. So expired-cache-fallback path validates once. Fine. But this means:
+Consider these scenarios:
 
-- Fresh cache: `_has_usable_channels` on read, then `parse_m3u` in `main` = **2 parses**.
-- Expired cache, download succeeds: `_has_usable_channels` on new content + `parse_m3u` in `main` = **2 parses** (plus splitlines).
-- Expired cache, download fails, fallback: `_has_usable_channels` on cache + `parse_m3u` in `main` = **2 parses**.
+- **User picked a channel → RESULT_URL defined → launches VLC.** ✅
+- **User pressed 0 / Ctrl+C → RESULT_URL empty, PY_EXIT=0 → "No channel was selected."** ✅
+- **No matches → PY_EXIT=2 → "No channels matched."** ✅
+- **Python crashed → PY_EXIT=1 → "Search engine failed (exit 1)."** ✅
 
-So the "double parse" is universal, not just on hot read. That's the concrete cost of Issue #1.
+Wait — the ordering is `defined RESULT_URL` first, then `PY_EXIT equ 2`, then `PY_EXIT neq 0`. That covers everything. Fine. **No bug.** I was wrong to flag this as a potential issue. My mistake.
+
+Actually, let me be more careful. One edge case: what if Python **writes the URL file but then exits 2** (e.g., a bug in the write path that shouldn't happen)? Then `RESULT_URL` is defined and VLC launches, ignoring the exit code. That's a hypothetical, and arguably the right behavior (URL was produced). Fine.
+
+**Retracting Issue #2.** Batch is correct.
 
 ---
 
-## One Genuine Design Observation
-
-The `parse_m3u` function is now doing three separate things:
-1. Structural validation (`_has_usable_channels`).
-2. Full parsing for search.
-3. Title extraction with quote handling.
-
-If you ever want to eliminate the double-parse cleanly, restructure so `download_m3u` returns parsed channels:
+## ⚠️ Issue #3 — `parse_m3u` is now called inside `download_m3u`, which makes it a hard dependency of cache validity
 
 ```python
-def get_channels(force_refresh=False):
-    """Return parsed channels, using cache when possible. Exits on fatal error."""
-    lines = download_m3u(force_refresh=force_refresh)
+if lines:
     channels = parse_m3u(lines)
-    if not channels:
-        sys.exit(1)
-    return channels
+    if channels:
+        ...
+        return lines, channels
 ```
 
-And in `main`:
+This is correct behavior. But it means: **if `parse_m3u` has any bug or accepts any malformed input as a "channel", the cache-validity check inherits that bug.** That's fine — it's the same code that will be used for the actual search, so at least it's consistent.
+
+The thing to be careful of going forward: **`parse_m3u` is now load-bearing for cache freshness**. Any future change to it silently changes when caches are considered "valid". Worth a comment in `_is_valid_playlist` or `download_m3u` noting this coupling:
+
 ```python
-channels = get_channels(force_refresh=args.force_refresh)
+# NOTE: parse_m3u is the authoritative definition of a "usable channel".
+# Any change to it also changes cache-validity semantics.
+```
+
+Not urgent. Just worth recording so a future maintainer doesn't accidentally break cache validity by "improving" `parse_m3u`.
+
+---
+
+## ⚠️ Issue #4 — README image still points to `release_v0.1.3.jpg`
+
+```html
+<img src="assets/release_v0.1.3.jpg" width="600" alt="IPTV VLC Launcher">
+```
+
+Header says `v0.1.6`. I've flagged this cosmetic mismatch **four times** now. It's clearly intentional at this point, or it's being missed each pass. Either way:
+
+- If the file on disk is `release_v0.1.3.jpg`, rename it to `screenshot.jpg` and use that name — version-agnostic, never needs touching again.
+- If the file is missing, the README shows a broken image on GitHub.
+
+This is the single easiest fix in the whole project. Just do it.
+
+---
+
+## ⚠️ Issue #5 — `_is_valid_url` whitespace check is correct but subtly over-strict
+
+```python
+if any(ord(c) < 32 or c.isspace() for c in line):
+    return False
+```
+
+`c.isspace()` covers `' '`, `'\t'`, `'\n'`, `'\r'`, `'\v'`, `'\f'`, and — importantly — **Unicode whitespace** like `'\u00A0'` (non-breaking space), `'\u2003'` (em space), and `'\u3000'` (ideographic space). The `ord(c) < 32` clause is therefore redundant with `c.isspace()` for ASCII control chars, but harmless.
+
+**The concern**: some IPTV streams legitimately contain Unicode in the URL — e.g., IDN hostnames encoded as raw Unicode instead of punycode (`http://例え.jp/stream`), or percent-encoded paths where the percent-encoded form contains no literal spaces. A literal Unicode space inside a URL is genuinely malformed, so rejecting it is correct. **This is fine.** But it's worth knowing that the check will also reject any URL with an ideographic space (`\u3000`), which is almost never valid anyway. No fix needed — just a note.
+
+Actually, one place this could bite: some M3U files use `#EXTVLCOPT:http-user-agent=...` lines. Those start with `#` and are skipped by `parse_m3u`, so they never reach `_is_valid_url`. Fine.
+
+**No issue.** Retracting.
+
+---
+
+## ⚠️ Issue #6 — `download_m3u` returns a tuple, but `main` still prints the channel count outside
+
+```python
+lines, channels = download_m3u(force_refresh=args.force_refresh)
 print(f"[i] Loaded {len(channels)} channels")
 ```
 
-This parses once in the common path. The cache-validity check inside `download_m3u` would need to accept a cheap structural check (not a full parse) — which is exactly Issue #1's fix. Combine them and you get both correctness and performance.
+Note `lines` is now **unused** in `main`:
+
+```python
+lines, channels = download_m3u(...)
+print(f"[i] Loaded {len(channels)} channels")
+matches = fuzzy_search(args.query, channels, ...)
+```
+
+`lines` is captured but never read. Linters (pyflakes, ruff F841) will flag this. You could either:
+
+1. Return only `channels` from `download_m3u` — cleanest.
+2. Return `(lines, channels)` and use `_lines` for the unused one — conventional but a bit ugly.
+3. Keep it as is and accept the lint warning.
+
+Since `lines` is genuinely unused by callers, **Option 1** is the cleanest fix:
+
+```python
+def download_m3u(force_refresh=False) -> list:
+    """... returns the parsed channel list."""
+    ...
+    return channels
+```
+
+And `main` becomes:
+```python
+channels = download_m3u(force_refresh=args.force_refresh)
+print(f"[i] Loaded {len(channels)} channels")
+```
+
+If you ever want `lines` for something else (e.g., a `--dump-m3u` flag), you can reintroduce the tuple then. Right now it's dead data.
 
 ---
 
-## Verdict (honest version)
+## ⚠️ Issue #7 — Bash `do_search` and Batch `:SEARCH` don't distinguish "user cancelled" from "no results"
 
-**v0.1.5 is a solid release, but it's not "pristine."** The cache-validation additions are genuinely good defensive design — but they came at the cost of **parsing the 30k-channel playlist two to three times per invocation**, which is a real (if not catastrophic) regression. If a user runs the tool repeatedly, they'll feel the extra ~0.5–1s per launch.
+Python exits **0** when the user cancels (`pick == '0'` → `return` from `main()` → process exits 0). So the shells see:
 
-**Before tagging v0.1.5, I'd do:**
-1. Make `_has_usable_channels` a cheap structural check (not a full parse) — **Issue #1**.
-2. Fix the README image reference — **Issue #5**.
-3. Tighten `_is_valid_playlist`'s `#EXTINF` check to per-line — **Issue #6**.
-4. Update the `download_m3u` docstring — **Issue #7**.
+| Outcome | Exit code |
+|---------|-----------|
+| User picked a channel | 0 (and result file written) |
+| User pressed 0 / Ctrl+C | 0 (result file empty) |
+| No matches found | 2 |
+| Error | 1 |
 
-Items 3 and 4 are one-line changes. Item 1 is the meaningful one. Items 5 and the argparse comment are cosmetic.
+In Batch `:SEARCH`:
+```bat
+) else (
+    echo.
+    echo No channel was selected.
+    timeout /t 2 >nul
+)
+```
 
-Everything else — exit-code parity, shell quoting, atomic writes, quote-aware EXTINF parsing, `--version`, user-scoped cache — is correct and well done. You should absolutely be pleased with this revision. Just don't skip the double-parse fix; it's the kind of thing that looks harmless in a code review and shows up as "why is this tool so slow on the second run?" in real use.
+This catches both "user cancelled" (exit 0, no URL) and any other exit-0-no-URL case. Correct.
+
+In Bash `do_search`:
+```bash
+if [ -n "$url" ]; then
+    echo -e "\e[32mLaunching VLC...\e[0m"
+    ...
+fi
+```
+
+If the user cancels, `$url` is empty, `py_exit` is 0, and neither the `-eq 1` nor the `-eq 2` branch fires — so **nothing is printed** and control returns to the menu. That's *fine*, but it's slightly inconsistent with PowerShell (`Invoke-Search` also does nothing in that case — OK) and Batch (prints "No channel was selected."). Minor cosmetic parity gap: Batch tells the user nothing happened; Bash silently returns.
+
+Not a bug. Just an inconsistency worth noting if you're aiming for exact user-facing parity. A one-line addition:
+
+```bash
+if [ "$py_exit" -eq 0 ] && [ -z "$url" ]; then
+    echo -e "\e[33mNo channel was selected.\e[0m"
+    sleep 1
+    return
+fi
+```
+
+---
+
+## ⚠️ Issue #8 — `_is_valid_playlist` lstrip signature is fragile
+
+```python
+head = content.lstrip('﻿\r\n \t')
+```
+
+The first character after the opening quote is a **BOM** (`\uFEFF`). It's invisible in most editors. This works, but is fragile:
+
+- Some editors/tools may strip the BOM during copy-paste, silently changing what characters are stripped.
+- If someone later edits the string in a plain ASCII editor, the BOM may be lost.
+
+**Safer:**
+```python
+BOM = '\ufeff'
+head = content.lstrip(BOM + '\r\n \t')
+```
+
+Or just:
+```python
+head = content.lstrip('\ufeff\r\n \t')
+```
+
+Same semantics, but immune to invisible-character loss. Cosmetic, but worth doing.
+
+---
+
+## ⚠️ Issue #9 — `urlparse` accepts URLs with empty paths that might be proxies' error responses
+
+Not really an issue — a URL like `http://example.com` (no path) is valid. iptv-org streams usually have paths. Leaving as-is is correct.
+
+---
+
+## ⚠️ Issue #10 — README says "whitespace validation" but doesn't mention the new behavior's limits
+
+> **Robust URL Validation**: Scheme, hostname, and whitespace validation keeps `http`/`https` plus VLC-playable schemes (`rtsp`, `rtmp`, `udp`, `rtp`, `mms`) and rejects malformed entries.
+
+Accurate. One small note: the whitespace check now rejects *any* whitespace anywhere in the URL line, including well-intentioned-but-malformed cases where a user manually pasted a URL with a trailing space. That's the right behavior, but you might add "URLs must be whitespace-free (as required by RFC 3986)" if you want to preempt confusion. Optional.
+
+---
+
+## Verdict (honest, final)
+
+**v0.1.6 is a genuine improvement over v0.1.5 and is ready to ship.** The tuple refactor is elegant, the whitespace check is correctly ordered, and the per-line `#EXTINF` check is a real hardening step. You've addressed every issue I raised in the last pass.
+
+**Before you tag it, the two fixes I'd actually do:**
+
+1. **Drop `lines` from the return tuple** (#6) — it's dead data and will trip linters. Easy, safe, cleans the API.
+2. **Fix the README image path** (#4) — four passes of flagging this; just rename the file and use `screenshot.jpg`.
+
+**Optional nice-to-haves, not required:**
+3. Replace the literal BOM in `lstrip` with `'\ufeff'` (#8).
+4. Add a "No channel was selected" message in Bash `do_search` for exact parity (#7).
+5. Add the coupling comment to `download_m3u` (#3).
+
+None of these are release-blockers. But I want to be clear: **"pristine" is not the right word** for code that still has a dead variable and a four-times-flagged broken README image reference. "Very good, with a couple of loose ends" is the honest verdict. If you ship v0.1.6 as-is, it works correctly; if you ship it with those two small fixes, it's genuinely tight.
+
+You've done excellent work here — the tool is now more defensive, more correct, and better documented than most CLI utilities of comparable scope. Ship with the two small fixes and it'll be a clean v0.1.6; or hold for v0.1.7 if you want to knock out the optional items too. Either way, you're past the point of diminishing returns on this revision.

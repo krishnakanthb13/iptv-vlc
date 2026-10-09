@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 title IPTV VLC Launcher
 color 0A
-set "SCRIPT_VERSION=0.1.6"
+set "SCRIPT_VERSION=0.1.7"
 
 :: --------------------------------------------------
 :: CONFIGURATION
@@ -251,22 +251,24 @@ if exist "%RESULT_FILE%" (
     set "RESULT_URL="
 )
 
-if defined RESULT_URL (
-    echo.
-    echo Launching VLC with selected stream...
-    start "" "%VLC%" "%RESULT_URL%"
-) else if !PY_EXIT! equ 2 (
+if "!PY_EXIT!" equ "0" (
+    if defined RESULT_URL (
+        echo.
+        echo Launching VLC with selected stream...
+        start "" "%VLC%" "%RESULT_URL%"
+    ) else (
+        echo.
+        echo No channel was selected.
+        timeout /t 2 >nul
+    )
+) else if "!PY_EXIT!" equ "2" (
     echo.
     echo No channels matched your search.
     timeout /t 2 >nul
-) else if !PY_EXIT! neq 0 (
+) else (
     echo.
     echo X Search engine failed (exit !PY_EXIT!).
     timeout /t 3 >nul
-) else (
-    echo.
-    echo No channel was selected.
-    timeout /t 2 >nul
 )
 goto MENU
 
@@ -275,16 +277,38 @@ goto MENU
 set "new_t="
 set /p new_t=Enter new sensitivity (0.1 - 1.0): 
 if not defined new_t goto MENU
-:: More robust validation. First digit after the dot must be 1-9 so
-:: values below 0.1 (0.0, 0.01, .0) are rejected.
-echo %new_t%| findstr /r "^0\.[1-9][0-9]*$ ^1\.[0][0]*$ ^1$ ^\.[1-9][0-9]*$" >nul 2>nul
+:: Validate without echoing raw input into a command.
+:: First: allow only digits and dot by stripping them all;
+:: anything left means a disallowed (possibly dangerous)
+:: character was entered. Each strip is guarded because
+:: substituting on an empty variable is a cmd quirk.
+set "check=!new_t!"
+if defined check set "check=!check:0=!"
+if defined check set "check=!check:1=!"
+if defined check set "check=!check:2=!"
+if defined check set "check=!check:3=!"
+if defined check set "check=!check:4=!"
+if defined check set "check=!check:5=!"
+if defined check set "check=!check:6=!"
+if defined check set "check=!check:7=!"
+if defined check set "check=!check:8=!"
+if defined check set "check=!check:9=!"
+if defined check set "check=!check:.=!"
+if defined check (
+    echo Invalid value. Must be between 0.1 and 1.0 (e.g. 0.5, 0.75, 1.0)
+    timeout /t 2 >nul
+    goto MENU
+)
+:: Second: range/format check. Input is now known to contain
+:: only [0-9.], so findstr cannot be fed metacharacters.
+echo !new_t!| findstr /r "^0\.[1-9][0-9]*$ ^1\.[0][0]*$ ^1$ ^\.[1-9][0-9]*$" >nul 2>nul
 if errorlevel 1 (
     echo Invalid value. Must be between 0.1 and 1.0 (e.g. 0.5, 0.75, 1.0)
     timeout /t 2 >nul
     goto MENU
 )
 :: Normalize ".5" style input to "0.5"
-if "%new_t:~0,1%"=="." set "new_t=0%new_t%"
+if "!new_t:~0,1!"=="." set "new_t=0!new_t!"
 set "FUZZY_THRESHOLD=%new_t%"
 echo Sensitivity updated to %FUZZY_THRESHOLD%
 timeout /t 1 >nul

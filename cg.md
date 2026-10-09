@@ -1,51 +1,43 @@
-IPTV VLC Launcher v0.1.5 — Final Audit
-The latest files show that the major fixes from the previous audit are present: usable-channel validation before cache replacement, validation when reading the cache, the Python --version option, and quoted Bash interpreter paths. The Python compilation and Bash syntax checks also pass. 
+## Additional findings from the v0.1.6 files
+
+I ran the Python compilation and Bash syntax checks successfully. The targeted tests also confirm that raw whitespace, malformed hosts, and invalid ports are rejected, while valid HTTPS/RTSP URLs and channel titles containing commas are handled correctly.&#x20;
 
 
 
-I would still qualify the claim that the project is completely bulletproof. There is one remaining URL-validation gap, plus a couple of cross-shell verification points worth tightening.
-Remaining findings
+I found three remaining edge cases worth addressing:
 
-1. URL validation accepts raw whitespace
-Low–medium
+1\. Batch sensitivity input is expanded unsafely
 
-_is_valid_url() currently accepts URLs such as https://example.com/live stream and even a URL containing a tab in its path. 
+Security hardening
 
+The line `echo %new_t%| findstr ...` expands raw user input into a command before validation. Special characters such as `&` can be interpreted as command separators.
 
+Fix: Validate the input without inserting the untrusted value directly into a command line. Test inputs containing `&`, `|`, `%`, `!`, parentheses, and spaces.
 
-Recommended fix: Reject whitespace and control characters in stream URLs before parsing them. Legitimate spaces should be percent-encoded. Keep in mind that this is input validation; it cannot guarantee that a remote stream is actually playable.
+2\. Bash interactive search does not handle every failure code
 
+The interactive Bash path handles exit codes `1` and `2` explicitly, but other nonzero codes fall through.&#x20;
 
-
-
-2. Interactive Batch search does not distinguish failures
-Low–medium
-
-The interactive Batch search runs Python and checks whether a result URL exists, but it does not capture and interpret the Python exit code the way the quick-search path does. A download or parsing failure can therefore look like an ordinary cancellation or empty selection.
-Recommended fix: Capture %errorlevel% immediately after Python exits and distinguish successful selection, no matches, cancellation, and genuine errors. The relevant interactive-search section is at lines 244–262. 
-iptv_search.py
+IPTV_Launcher.sh
 
 
 
+Fix: Handle every code other than `0` and `2` as an error. This makes the behavior match PowerShell more closely.
+
+3\. Some launch paths don't require Python success
+
+The interactive Batch path launches VLC whenever the result file contains a URL, without requiring `PY_EXIT` to be zero. PowerShell quick search similarly attempts to launch VLC before evaluating the exit code.&#x20;
+
+IPTV_Launcher.sh
+
+README.md
 
 
-3. Cross-platform parity remains only partially verified
-The version strings consistently identify 0.1.5 across the four scripts, and Python --version works. 
 
+Fix: Launch VLC only when Python exits successfully and the result URL is nonempty. This protects against partial output if an unexpected error occurs.
 
- However, PowerShell was not available in this environment, and static checks cannot verify Windows Batch expansion or real VLC launches.
-Recommended fix: Before making a definitive cross-platform release claim, exercise the same search, cancellation, error, and sensitivity scenarios on Windows and macOS/Linux.
+## Release recommendation
 
+The Python improvements in v0.1.6 look solid, particularly the `(lines, channels)` return contract, single-parse flow, playlist validation, and whitespace rejection. The remaining issues are concentrated in shell error handling and input safety.
 
-
-Final assessment
-Area	Assessment
-Python compilation	Passed
-Bash syntax	Passed
-Cache integrity improvements	Implemented
-Comma-preserving parsing	Verified
-URL validation	Small gap remains
-Shell error parity	Batch interactive path
-Native Windows/macOS runtime	Not verified
-My recommendation: v0.1.5 is in good shape. Fix raw-whitespace URL acceptance and align interactive Batch error handling before calling the implementation fully release-ready. These are targeted refinements, not a reason to redesign the project.
-I inspected the uploaded revision and ran targeted checks; I have not modified any files or verified actual VLC playback.
+My verdict: nearly release-ready, but not yet fully verified. I would fix the Batch input expansion first, then make the exit-code handling consistent across all three launchers. Actual Windows execution and VLC playback remain unverified; the static checks alone cannot establish complete cross-platform parity.

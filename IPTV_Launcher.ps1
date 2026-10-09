@@ -5,7 +5,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 # --- CONFIGURATION ---
 $FuzzyThreshold = 0.7
-$ScriptVersion = "0.1.6"
+$ScriptVersion = "0.1.7"
 # ---------------------
 
 # Quick search: if a query was passed as argument, skip menu
@@ -34,7 +34,7 @@ if ($args.Count -gt 0) {
     try {
         & $pythonCmd.Source "$SearchScript" --query "$query" --threshold $tString --output-file "$resultFile"
         $pyExit = $LASTEXITCODE
-        if (Test-Path $resultFile) {
+        if ($pyExit -eq 0 -and (Test-Path $resultFile)) {
             $url = (Get-Content $resultFile -Raw)
             if ($url) { Start-Process -FilePath "$vlc" -ArgumentList "`"$($url.Trim())`"" }
         }

@@ -21,7 +21,7 @@ def _cache_file():
 CACHE_FILE = _cache_file()
 CACHE_EXPIRY = 3600 * 24  # 24 hours
 DOWNLOAD_TIMEOUT = 60  # seconds
-SCRIPT_VERSION = "0.1.6"
+SCRIPT_VERSION = "0.1.7"
 
 def _read_cache():
     """Read and return lines from cache if it exists, else None."""
@@ -53,7 +53,7 @@ def _is_valid_playlist(content):
     """Check that downloaded content looks like a real M3U playlist."""
     if not content:
         return False
-    head = content.lstrip('﻿\r\n \t')
+    head = content.lstrip('\ufeff\r\n \t')
     first_line = head.split('\n', 1)[0].strip().upper()
     if first_line != '#EXTM3U':
         return False
@@ -64,25 +64,29 @@ def _is_valid_playlist(content):
 
 
 def download_m3u(force_refresh=False):
-    """Downloads the master M3U list, caches it, and returns (lines, channels).
+    """Downloads the master M3U list, caches it, and returns parsed channels.
 
-    Validates downloaded content before replacing the cache, falls back to the
-    previous cache when the download fails, and exits with status 1 on a
-    fatal error. The playlist is parsed exactly once per code path.
+    Validates downloaded content before replacing the cache, falls back to
+    the previous cache when the download fails, and exits with status 1 on
+    a fatal error. The cache is read from disk at most once and the
+    playlist is parsed exactly once per code path.
     """
     cache_age = _cache_age_hours()
-    old_lines = _read_cache() if force_refresh else None
+    # Read the cache once so the validity check and the fallback paths
+    # share the same content instead of re-reading it from disk.
+    cached_lines = _read_cache() if cache_age is not None else None
 
     # If not forcing refresh and cache is valid, use it
     if not force_refresh:
-        if cache_age is not None and cache_age * 3600 < CACHE_EXPIRY:
-            lines = _read_cache()
-            if lines:
-                channels = parse_m3u(lines)
-                if channels:
-                    cache_time = _cache_timestamp()
-                    print(f"[i] Using cached playlist ({cache_age}h old, from {cache_time})")
-                    return lines, channels
+        if cache_age is not None and cache_age * 3600 < CACHE_EXPIRY and cached_lines:
+            # NOTE: parse_m3u is the authoritative definition of a
+            # "usable channel". Any change to it also changes
+            # cache-validity semantics.
+            channels = parse_m3u(cached_lines)
+            if channels:
+                cache_time = _cache_timestamp()
+                print(f"[i] Using cached playlist ({cache_age}h old, from {cache_time})")
+                return channels
 
     print("\n[!] Downloading master channel list (30,000+ channels)...")
     start_time = time.time()
@@ -109,22 +113,20 @@ def download_m3u(force_refresh=False):
             f.write(content)
         os.replace(temp_cache, CACHE_FILE)
         temp_cache = None
-        return new_lines, new_channels
+        return new_channels
     except Exception as e:
         print(f"X Download failed: {e}", flush=True)
         # For forced refresh, keep the old cache if the download failed
-        if force_refresh and old_lines:
-            old_channels = parse_m3u(old_lines)
+        if force_refresh and cached_lines:
+            old_channels = parse_m3u(cached_lines)
             if old_channels:
                 print("[!] Download failed - keeping existing cached playlist")
-                return old_lines, old_channels
-        if cache_age is not None:
-            lines = _read_cache()
-            if lines:
-                channels = parse_m3u(lines)
-                if channels:
-                    print(f"[!] Falling back to cached playlist ({cache_age}h old)")
-                    return lines, channels
+                return old_channels
+        if cached_lines:
+            channels = parse_m3u(cached_lines)
+            if channels:
+                print(f"[!] Falling back to cached playlist ({cache_age}h old)")
+                return channels
         sys.exit(1)
     finally:
         if temp_cache and os.path.exists(temp_cache):
@@ -273,7 +275,7 @@ def main():
         print("X No search query provided.")
         return
 
-    lines, channels = download_m3u(force_refresh=args.force_refresh)
+    channels = download_m3u(force_refresh=args.force_refresh)
     print(f"[i] Loaded {len(channels)} channels")
 
     matches = fuzzy_search(args.query, channels, args.threshold, args.limit)

@@ -5,7 +5,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 # --- CONFIGURATION ---
 $FuzzyThreshold = 0.7
-$ScriptVersion = "0.1.5"
+$ScriptVersion = "0.1.6"
 # ---------------------
 
 # Quick search: if a query was passed as argument, skip menu

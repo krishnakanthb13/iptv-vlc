@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 title IPTV VLC Launcher
 color 0A
-set "SCRIPT_VERSION=0.1.5"
+set "SCRIPT_VERSION=0.1.6"
 
 :: --------------------------------------------------
 :: CONFIGURATION
@@ -242,6 +242,7 @@ if exist "%RESULT_FILE%" del "%RESULT_FILE%"
 
 :: Run the Python search engine interactively
 %PY_CMD% "%~dp0iptv_search.py" --threshold %FUZZY_THRESHOLD% --output-file "%RESULT_FILE%"
+set "PY_EXIT=%errorlevel%"
 
 if exist "%RESULT_FILE%" (
     set /p RESULT_URL=<"%RESULT_FILE%"
@@ -254,6 +255,14 @@ if defined RESULT_URL (
     echo.
     echo Launching VLC with selected stream...
     start "" "%VLC%" "%RESULT_URL%"
+) else if !PY_EXIT! equ 2 (
+    echo.
+    echo No channels matched your search.
+    timeout /t 2 >nul
+) else if !PY_EXIT! neq 0 (
+    echo.
+    echo X Search engine failed (exit !PY_EXIT!).
+    timeout /t 3 >nul
 ) else (
     echo.
     echo No channel was selected.

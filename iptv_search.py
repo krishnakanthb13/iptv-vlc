@@ -21,7 +21,7 @@ def _cache_file():
 CACHE_FILE = _cache_file()
 CACHE_EXPIRY = 3600 * 24  # 24 hours
 DOWNLOAD_TIMEOUT = 60  # seconds
-SCRIPT_VERSION = "0.1.5"
+SCRIPT_VERSION = "0.1.6"
 
 def _read_cache():
     """Read and return lines from cache if it exists, else None."""
@@ -57,16 +57,19 @@ def _is_valid_playlist(content):
     first_line = head.split('\n', 1)[0].strip().upper()
     if first_line != '#EXTM3U':
         return False
-    return '#EXTINF' in content.upper()
-
-
-def _has_usable_channels(lines):
-    """True if the playlist lines parse into at least one usable channel."""
-    return bool(parse_m3u(lines))
+    return any(
+        line.lstrip().upper().startswith('#EXTINF')
+        for line in content.splitlines()
+    )
 
 
 def download_m3u(force_refresh=False):
-    """Downloads the master M3U list and caches it to disk for 24 hours."""
+    """Downloads the master M3U list, caches it, and returns (lines, channels).
+
+    Validates downloaded content before replacing the cache, falls back to the
+    previous cache when the download fails, and exits with status 1 on a
+    fatal error. The playlist is parsed exactly once per code path.
+    """
     cache_age = _cache_age_hours()
     old_lines = _read_cache() if force_refresh else None
 
@@ -74,10 +77,12 @@ def download_m3u(force_refresh=False):
     if not force_refresh:
         if cache_age is not None and cache_age * 3600 < CACHE_EXPIRY:
             lines = _read_cache()
-            if lines and _has_usable_channels(lines):
-                cache_time = _cache_timestamp()
-                print(f"[i] Using cached playlist ({cache_age}h old, from {cache_time})")
-                return lines
+            if lines:
+                channels = parse_m3u(lines)
+                if channels:
+                    cache_time = _cache_timestamp()
+                    print(f"[i] Using cached playlist ({cache_age}h old, from {cache_time})")
+                    return lines, channels
 
     print("\n[!] Downloading master channel list (30,000+ channels)...")
     start_time = time.time()
@@ -92,7 +97,8 @@ def download_m3u(force_refresh=False):
         if not _is_valid_playlist(content):
             raise ValueError("downloaded content is not a valid M3U playlist")
         new_lines = content.splitlines(True)
-        if not _has_usable_channels(new_lines):
+        new_channels = parse_m3u(new_lines)
+        if not new_channels:
             raise ValueError("downloaded playlist contains no usable channels")
         cache_dir = os.path.dirname(CACHE_FILE) or "."
         with tempfile.NamedTemporaryFile(
@@ -103,18 +109,22 @@ def download_m3u(force_refresh=False):
             f.write(content)
         os.replace(temp_cache, CACHE_FILE)
         temp_cache = None
-        return new_lines
+        return new_lines, new_channels
     except Exception as e:
         print(f"X Download failed: {e}", flush=True)
         # For forced refresh, keep the old cache if the download failed
-        if force_refresh and old_lines and _has_usable_channels(old_lines):
-            print("[!] Download failed - keeping existing cached playlist")
-            return old_lines
+        if force_refresh and old_lines:
+            old_channels = parse_m3u(old_lines)
+            if old_channels:
+                print("[!] Download failed - keeping existing cached playlist")
+                return old_lines, old_channels
         if cache_age is not None:
             lines = _read_cache()
-            if lines and _has_usable_channels(lines):
-                print(f"[!] Falling back to cached playlist ({cache_age}h old)")
-                return lines
+            if lines:
+                channels = parse_m3u(lines)
+                if channels:
+                    print(f"[!] Falling back to cached playlist ({cache_age}h old)")
+                    return lines, channels
         sys.exit(1)
     finally:
         if temp_cache and os.path.exists(temp_cache):
@@ -143,6 +153,10 @@ def _extinf_title(line):
 
 def _is_valid_url(line):
     """True if line is a playable URL with a known scheme and hostname."""
+    # Reject whitespace and control characters; legitimate spaces must be
+    # percent-encoded in a URL
+    if any(ord(c) < 32 or c.isspace() for c in line):
+        return False
     try:
         parsed = urlparse(line)
         if parsed.scheme.lower() not in VALID_SCHEMES:
@@ -233,10 +247,11 @@ def main():
         "--force-refresh", action="store_true",
         help="Force fresh download ignoring cache"
     )
+    # argparse uses exit code 2 for usage errors; we reserve 2 for "no
+    # matches", so remap argparse's 2 -> 1 before it can leak out.
     try:
         args = parser.parse_args()
     except SystemExit as e:
-        # argparse exits 2 on usage errors; reserve 2 for "no matches"
         sys.exit(1 if e.code == 2 else e.code)
 
     # Validate threshold
@@ -258,14 +273,7 @@ def main():
         print("X No search query provided.")
         return
 
-    lines = download_m3u(force_refresh=args.force_refresh)
-    if not lines:
-        sys.exit(1)
-
-    channels = parse_m3u(lines)
-    if not channels:
-        print("X Could not parse any channels from the playlist.")
-        sys.exit(1)
+    lines, channels = download_m3u(force_refresh=args.force_refresh)
     print(f"[i] Loaded {len(channels)} channels")
 
     matches = fuzzy_search(args.query, channels, args.threshold, args.limit)

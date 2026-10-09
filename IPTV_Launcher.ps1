@@ -20,8 +20,8 @@ if ($args.Count -gt 0) {
     foreach ($cmd in "python3", "python") {
         $found = Get-Command $cmd -ErrorAction SilentlyContinue
         if ($found) {
-            try { & $found.Source --version 2>$null } catch { }
-            if ($LASTEXITCODE -eq 0) { $pythonCmd = $found; break }
+            try { & $found.Source --version 2>$null; $code = $LASTEXITCODE } catch { $code = 1 }
+            if ($code -eq 0) { $pythonCmd = $found; break }
         }
     }
     if (-not $pythonCmd) { Write-Host "X Python not found." -ForegroundColor Red; exit 1 }
@@ -31,7 +31,8 @@ if ($args.Count -gt 0) {
     $tString = $FuzzyThreshold.ToString([System.Globalization.CultureInfo]::InvariantCulture)
     try {
         & $pythonCmd.Source "$SearchScript" --query "$query" --threshold $tString --output-file "$resultFile"
-        if (Test-Path $resultFile) {
+        $pyExit = $LASTEXITCODE
+        if ($pyExit -eq 0 -and (Test-Path $resultFile)) {
             $url = (Get-Content $resultFile -Raw)
             if ($url) { Start-Process -FilePath "$vlc" -ArgumentList "`"$($url.Trim())`"" }
         }
@@ -93,8 +94,8 @@ function Invoke-Search {
     foreach ($cmd in "python3", "python") {
         $found = Get-Command $cmd -ErrorAction SilentlyContinue
         if ($found) {
-            try { & $found.Source --version 2>$null } catch { }
-            if ($LASTEXITCODE -eq 0) {
+            try { & $found.Source --version 2>$null; $code = $LASTEXITCODE } catch { $code = 1 }
+            if ($code -eq 0) {
                 $pythonCmd = $found
                 break
             }

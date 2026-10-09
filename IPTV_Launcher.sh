@@ -32,9 +32,10 @@ if [ $# -gt 0 ]; then
     python_cmd=$(command -v python3 || command -v python)
     result_file=$(mktemp)
     $python_cmd "$SEARCH_SCRIPT" --query "$query" --threshold "$FUZZY_THRESHOLD" --output-file "$result_file"
+    py_exit=$?
     url=$(cat "$result_file" 2>/dev/null)
     rm -f "$result_file"
-    if [ -n "$url" ]; then
+    if [ -n "$url" ] && [ $py_exit -eq 0 ]; then
         "$VLC" "$url" &
     fi
     exit 0
@@ -146,7 +147,9 @@ while true; do
     choice="${choice//[[:space:]]/}"
     [ -z "$choice" ] && continue
 
-    case "${choice,,}" in  # lowercase for case-insensitive match
+    # Case-insensitive match (compatible with Bash 3.2 and 4+)
+    choice_lc="$(printf '%s' "$choice" | tr '[:upper:]' '[:lower:]')"
+    case "$choice_lc" in  # lowercase for case-insensitive match
         0) echo -e "\e[32mGoodbye!\e[0m"; break ;;
         s) do_search ;;
         t)

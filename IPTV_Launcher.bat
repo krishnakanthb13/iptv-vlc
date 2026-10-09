@@ -172,7 +172,8 @@ if %errorlevel% neq 0 (
 set "RESULT_FILE=%TEMP%\iptv_result_%RANDOM%.txt"
 if exist "%RESULT_FILE%" del "%RESULT_FILE%"
 
-python "%~dp0iptv_search.py" --query "%~1" --threshold %FUZZY_THRESHOLD% --output-file "%RESULT_FILE%"
+python "%~dp0iptv_search.py" --query "%*" --threshold %FUZZY_THRESHOLD% --output-file "%RESULT_FILE%"
+set "PY_EXIT=%errorlevel%"
 
 if exist "%RESULT_FILE%" (
     set /p RESULT_URL=<"%RESULT_FILE%"
@@ -182,7 +183,9 @@ if exist "%RESULT_FILE%" (
 )
 
 if defined RESULT_URL (
-    start "" "%VLC%" "%RESULT_URL%"
+    if %PY_EXIT% equ 0 (
+        start "" "%VLC%" "%RESULT_URL%"
+    )
 )
 exit /b 0
 

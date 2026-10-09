@@ -4,11 +4,9 @@ import argparse
 import difflib
 import tempfile
 import time
+from urllib.parse import urlparse
 
-try:
-    import urllib.request as urllib_req  # Python 3
-except ImportError:
-    import urllib2 as urllib_req  # Python 2
+import urllib.request as urllib_req  # Python 3
 
 # --- CONFIGURATION ---
 MASTER_URL = "https://iptv-org.github.io/iptv/index.m3u"
@@ -16,10 +14,6 @@ CACHE_FILE = os.path.join(tempfile.gettempdir(), "iptv_master_cache.m3u")
 CACHE_EXPIRY = 3600 * 24  # 24 hours
 DOWNLOAD_TIMEOUT = 60  # seconds
 SCRIPT_VERSION = "0.1.0"
-
-# Compatibility for Python 2/3 input
-if sys.version_info[0] < 3:
-    input = raw_input
 
 def _read_cache():
     """Read and return lines from cache if it exists, else None."""
@@ -78,7 +72,7 @@ def download_m3u(force_refresh=False):
             if lines:
                 print(f"[!] Falling back to cached playlist ({cache_age}h old)")
                 return lines
-        return []
+        sys.exit(1)
 
 
 def parse_m3u(lines):
@@ -92,15 +86,19 @@ def parse_m3u(lines):
             comma_idx = line.rfind(',')
             if comma_idx != -1:
                 current_name = line[comma_idx + 1:].strip()
-        elif line.startswith("http") and current_name:
-            channels.append({"name": current_name, "url": line})
-            current_name = None
+        elif current_name:
+            parsed = urlparse(line)
+            if parsed.scheme in ("http", "https"):
+                channels.append({"name": current_name, "url": line})
+                current_name = None
+            elif not line or line.startswith("#"):
+                pass
+            else:
+                current_name = None
         elif not line or line.startswith("#"):
-            # Skip empty lines and other directives, but don't reset current_name
-            # (some M3U files have extra tags between EXTINF and URL)
+            # Skip empty lines and other directives
             pass
         else:
-            # Non-http, non-comment line resets state
             current_name = None
     return channels
 
@@ -157,8 +155,13 @@ def main():
     )
     args = parser.parse_args()
 
-    # Clamp threshold to valid range
-    args.threshold = max(0.1, min(1.0, args.threshold))
+    # Validate threshold
+    if args.threshold < 0.1 or args.threshold > 1.0 or not (0.1 <= args.threshold <= 1.0):
+        print("X Invalid threshold. Must be between 0.1 and 1.0.")
+        sys.exit(1)
+    if args.limit < 1:
+        print("X Invalid limit. Must be >= 1.")
+        sys.exit(1)
 
     # Prompt for query if not provided via flag
     if not args.query:
@@ -173,12 +176,12 @@ def main():
 
     lines = download_m3u(force_refresh=args.force_refresh)
     if not lines:
-        return
+        sys.exit(1)
 
     channels = parse_m3u(lines)
     if not channels:
         print("X Could not parse any channels from the playlist.")
-        return
+        sys.exit(1)
     print(f"[i] Loaded {len(channels)} channels")
 
     matches = fuzzy_search(args.query, channels, args.threshold, args.limit)
@@ -186,7 +189,7 @@ def main():
     if not matches:
         print(f"\n[!] No channels found matching '{args.query}' (sensitivity: {args.threshold})")
         print("    Try lowering the sensitivity with -T in the launcher.")
-        return
+        sys.exit(1)
 
     print(f"\n--- Search Results (Top {len(matches)}) ---")
     for i, (score, ch) in enumerate(matches):

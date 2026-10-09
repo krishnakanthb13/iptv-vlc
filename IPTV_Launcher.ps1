@@ -38,9 +38,15 @@ if ($args.Count -gt 0) {
     try {
         & $pythonCmd.Source "$SearchScript" --query "$query" --threshold $tString --output-file "$resultFile"
         $pyExit = $LASTEXITCODE
-        if ($pyExit -eq 0 -and (Test-Path $resultFile)) {
-            $url = (Get-Content $resultFile -Raw)
-            if ($url) { Start-Process -FilePath "$vlc" -ArgumentList "`"$($url.Trim())`"" }
+        if ($pyExit -eq 0) {
+            $url = if (Test-Path $resultFile) { (Get-Content $resultFile -Raw) } else { $null }
+            if ($url -and $url.Trim()) {
+                Start-Process -FilePath "$vlc" -ArgumentList "`"$($url.Trim())`""
+                exit 0
+            } else {
+                Write-Host "X No channel URL was produced." -ForegroundColor Yellow
+                exit 1
+            }
         }
     } finally {
         if (Test-Path $resultFile) { Remove-Item $resultFile -ErrorAction SilentlyContinue }

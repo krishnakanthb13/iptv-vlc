@@ -279,9 +279,13 @@ if exist "%RESULT_FILE%" (
     set "RESULT_URL="
 )
 
-if defined RESULT_URL (
-    if !PY_EXIT! equ 0 (
+if !PY_EXIT! equ 0 (
+    if defined RESULT_URL (
         start "" "%VLC%" "%RESULT_URL%"
+        exit /b 0
+    ) else (
+        echo X No channel URL was produced.
+        exit /b 1
     )
 )
 :: Exit codes 2 (no matches) and 3 (no selection) are

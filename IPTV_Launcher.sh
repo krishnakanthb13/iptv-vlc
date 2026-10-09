@@ -39,9 +39,14 @@ if [ $# -gt 0 ]; then
     py_exit=$?
     url=$(cat "$result_file" 2>/dev/null)
     rm -f "$result_file"
-    if [ -n "$url" ] && [ "$py_exit" -eq 0 ]; then
-        "$VLC" "$url" &
-        exit 0
+    if [ "$py_exit" -eq 0 ]; then
+        if [ -n "$url" ]; then
+            "$VLC" "$url" &
+            exit 0
+        else
+            echo -e "\e[33mX No channel URL was produced.\e[0m"
+            exit 1
+        fi
     fi
     # Exit codes 2 (no matches) and 3 (no selection)
     # are benign outcomes for a CLI invocation
@@ -153,13 +158,7 @@ do_search() {
         sleep 2
         return
     fi
-    if [ "$py_exit" -eq 3 ]; then
-        # User cancelled or made an invalid selection
-        echo -e "\e[33mNo channel was selected.\e[0m"
-        sleep 1
-        return
-    fi
-    if [ "$py_exit" -eq 0 ] && [ -z "$url" ]; then
+    if [ "$py_exit" -eq 3 ] || { [ "$py_exit" -eq 0 ] && [ -z "$url" ]; }; then
         echo -e "\e[33mNo channel was selected.\e[0m"
         sleep 1
         return

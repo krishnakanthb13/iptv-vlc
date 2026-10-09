@@ -1,30 +1,131 @@
-This is a genuinely strong v0.1.8. The changes you've listed are real, and the runtime-caught bugs (the `#EXTM3U` attributes, the MS Store stub) are exactly the kind of thing only actual execution finds. I'll do one final honest pass — same rigor as before — and then give you a straight verdict.
+This v0.1.9 is a genuinely clean revision. I'll do the same rigorous pass I've done throughout — and I'll note that I still have unresolved items from the previous pass that this release doesn't appear to address. Let me be specific.
 
 ---
 
-## ✅ Confirmed — everything you claimed is real
+## ✅ Confirmed — the six changes in this revision are real and correct
 
-| Change | Verified |
-|--------|----------|
-| Batch 1–25 menu branches now parenthesized | ✅ `if "%opt%"=="1" ( start ... & goto MENU )` — correct fix for CMD's `&`-outside-block semantics |
-| Windows cache scoping via SHA-256 of `~` | ✅ `hashlib.sha256(home.encode(..., "surrogateescape")).hexdigest()[:12]` — collision-resistant, `surrogateescape` handles odd Windows path bytes |
-| Collision-resistant `:GEN_RESULT_FILE` sub | ✅ Two `%RANDOM%` values, no pre-existing file is deleted |
-| Exit code `3` ("no selection") | ✅ Added in Python; documented; handled by all four shells |
-| Quick-search maps 2/3 → 0 | ✅ Batch: `if !PY_EXIT! equ 2 exit /b 0` / `equ 3 exit /b 0`; PS: `if ($pyExit -eq 2 -or $pyExit -eq 3) { exit 0 }`; Bash: `if [ "$py_exit" -eq 2 ] \|\| [ "$py_exit" -eq 3 ]` |
-| Conditional pause in wrapper | ✅ `if "%~1"=="" pause` |
-| `#EXTM3U` attribute tolerance | ✅ `if not first_line.startswith('#EXTM3U'): return False` |
-| Batch MS Store stub bypass | ✅ `for %%C in (python3 python) do ( ... %%C --version >nul 2>nul ... )` |
-| Parentheses removed from echoed error text | ✅ e.g. `echo Invalid value. Must be between 0.1 and 1.0 - e.g. 0.5, 0.75, 1.0` |
-| README softened parity claim | ✅ "Consistent menu, search..." not "identical" |
-| README documents exit-code contract | ✅ Full table added |
+| # | Change | Verification |
+|---|--------|--------------|
+| 1 | `_is_valid_url` rejects `"` in URL | ✅ `if '"' in line: return False` placed at function entry, before whitespace check |
+| 2 | PS empty-result parity | ✅ `Invoke-Search` now prints "No channel was selected." on empty URL after exit 0 |
+| 3 | Stricter `#EXTM3U` header validation | ✅ `first_line != '#EXTM3U' and not first_line.startswith(('#EXTM3U ', '#EXTM3U\t'))` — rejects `#EXTM3Ufoo` and `#EXTM3U-EXT` while allowing attributes |
+| 4 | Case-consistency for `#EXTINF` | ✅ `parse_m3u` now uses `line.upper().startswith("#EXTINF")` |
+| 5 | PS multi-candidate Python detection | ✅ `@(Get-Command ...)` + inner foreach over candidates, first functional wins |
+| 6 | Version bump to 0.1.9 in all 5 files | ✅ Verified in `.bat`, `.ps1`, `.sh`, `.py`, `README.md` |
 
-The `#EXTM3U` fix is the important one. It would have caused **100% cold-download failure** on real iptv-org output (which carries `x-tvg-url="..."` on the header line). Good catch — this is precisely the kind of thing static review misses and runtime testing catches.
+The `"` rejection is the important security fix. The `start "" "%VLC%" "%RESULT_URL%"` invocation in Batch would indeed be breakable by a URL containing `"` — a poisoned M3U from a compromised upstream would let an attacker inject arbitrary commands. Closing that at the parser is the right layer. Good catch.
+
+The stricter `#EXTM3U` check is also a meaningful hardening: `#EXTM3Ufoo` was previously accepted. It now isn't.
 
 ---
 
-## ⚠️ Issue #1 — Batch `for %%C in (...)` loop has a subtle exit-code bug
+## ⚠️ Issue #1 — README image reference, seventh pass
 
-Look carefully:
+```html
+<img src="assets/release_v0.1.3.jpg" width="600" alt="IPTV VLC Launcher">
+```
+
+The README header says `v0.1.9`. The image filename says `v0.1.3`. This has now been flagged **seven times** across six revisions. I have to be direct: either this is deliberate (in which case, why? — a v0.1.3 screenshot with the v0.1.9 header is misleading to a reader), or it's an oversight that keeps getting missed each pass.
+
+**Please just do this:**
+```
+mv assets/release_v0.1.3.jpg assets/screenshot.jpg
+```
+And in README.md:
+```html
+<img src="assets/screenshot.jpg" width="600" alt="IPTV VLC Launcher">
+```
+
+One-time cost, permanently resolved. I'm going to keep flagging it until it's gone, because it's the single most visible inconsistency in the project.
+
+---
+
+## ⚠️ Issue #2 — PS `Invoke-Search` empty-URL branch is technically correct but slightly misleading
+
+```powershell
+if ($url) {
+    ...
+} else {
+    # Exit 0 but no URL - inconsistent result, report it
+    Write-Host "`nNo channel was selected." -ForegroundColor Yellow
+    Start-Sleep -Seconds 1
+}
+```
+
+The comment says "inconsistent result", and the user-facing message is "No channel was selected." But **exit 0 without a URL is not a normal path** — the Python contract is:
+- Exit 0 → URL written to `--output-file`.
+- Exit 3 → no selection.
+
+So exit 0 + empty file means: Python wrote to `--output-file` but the content was empty, OR Python's file write failed silently (disk full, permissions). The user-facing message "No channel was selected" is close enough for UX, but the diagnostic value is lost. Consider:
+
+```powershell
+} else {
+    Write-Host "`n[!] Python exited 0 but produced no URL (unexpected state)." -ForegroundColor Yellow
+    Write-Host "    This usually means the output file was empty or unwritable." -ForegroundColor Gray
+    Start-Sleep -Seconds 2
+}
+```
+
+Not required — just makes debugging edge cases easier. Cosmetic.
+
+---
+
+## ⚠️ Issue #3 — `_is_valid_url` quote rejection is correct, but the `|` character should arguably be rejected too
+
+```python
+if '"' in line:
+    return False
+```
+
+Batch's `start "" "%VLC%" "%RESULT_URL%"` is a single command; the URL is inside double quotes. On Windows, `|`, `&`, `<`, `>`, `^`, `%`, and `!` are command metacharacters when **outside** quotes, but inside `"..."` they're literal. So a `|` in the URL is harmless once the URL is quoted.
+
+**However**, `%` is special: in `%RESULT_URL%` variable expansion (which you're not doing — you use `%RESULT_URL%` as a variable reference and the value is substituted at expansion time). If the URL contains `%FOO%` and `FOO` is a defined environment variable, `%RESULT_URL%` expands to a string that then re-expands? No — CMD does **not** re-expand substituted variable content. So `%` in the URL is safe here.
+
+`!` is a problem **if** `EnableDelayedExpansion` is on (which it is). If `%RESULT_URL%` contains `!`, then `!` will be interpreted as the delayed-expansion boundary at parse time. Let me trace:
+
+```bat
+start "" "%VLC%" "%RESULT_URL%"
+```
+
+`%RESULT_URL%` is expanded at parse time to, say, `http://example.com/!danger`. The resulting line is:
+```bat
+start "" "C:\...\vlc.exe" "http://example.com/!danger"
+```
+
+Because `EnableDelayedExpansion` is on, CMD scans this line for `!` and treats the content between `!` pairs as a subexpression to expand. With only one `!`, CMD's behavior is: it consumes the `!` and continues. The literal `!` is **removed** from the string. So the URL becomes `http://example.com/danger` — corrupted but not exploitable.
+
+With two `!`: `http://example.com/!foo!bar` — `!foo!` is treated as a variable name `foo`; if `foo` isn't defined, the whole thing becomes empty. So `http://example.com/bar`. Still not exploitable, but data-corrupting.
+
+**Recommendation**: reject `!` in URLs too:
+```python
+if '"' in line or '!' in line:
+    return False
+```
+
+URLs legitimately should not contain unencoded `"` or `!`, and rejecting them is harmless. This closes a subtle correctness gap in the Batch path (Bash and PS handle `!` fine).
+
+---
+
+## ⚠️ Issue #4 — `_is_valid_playlist` still permits `#EXTM3U\n` followed by nothing
+
+```python
+if first_line != '#EXTM3U' and not first_line.startswith(('#EXTM3U ', '#EXTM3U\t')):
+    return False
+return any(
+    line.lstrip().upper().startswith('#EXTINF')
+    for line in content.splitlines()
+)
+```
+
+Both checks must pass. ✅ A content of `#EXTM3U\n<HTML>` fails the second check. ✅ Correct.
+
+But: a content of `#EXTM3U\n#EXTINF:-1,test\n` (no URL following) passes both checks — the `#EXTINF` line exists. Then `parse_m3u` produces zero channels, and `download_m3u` raises `ValueError("downloaded playlist contains no usable channels")`. ✅ Handled by a different layer. Fine.
+
+**No bug.**
+
+---
+
+## ⚠️ Issue #5 — Batch `for %%C` loop has a subtle interaction with `EnableDelayedExpansion` and `%%C --version`
 
 ```bat
 for %%C in (python3 python) do (
@@ -38,74 +139,17 @@ for %%C in (python3 python) do (
 )
 ```
 
-Inside the `for` loop body, `%%C --version >nul 2>nul` executes a candidate. But **`%errorlevel%` inside a `for /f` block is a classic trap**: `if !errorlevel! equ 0` uses delayed expansion, so it reads the *current* value at execution time. ✅ That part is correct.
+Inside the `for` block, `%%C --version >nul 2>nul` executes the candidate. `errorlevel` is then checked with `!errorlevel!` (delayed). ✅
 
-But: what if `where python3` succeeds and `python3 --version` **succeeds**, setting `PY_CMD=python3`. Then the `for` loop moves to `python`. The `if not defined PY_CMD` guard prevents re-evaluation. ✅
+But there's a subtle issue: if `python3` is the MS Store stub, `python3 --version` may **open the Microsoft Store app** and block, or return immediately with exit 9009 (depending on Windows version and configuration). If it blocks, the `for` loop hangs. In practice, modern Windows (10 2004+, 11) returns non-zero immediately for the stub. ✅ Acceptable.
 
-What if `where python3` succeeds but `python3 --version` **fails** (MS Store stub)? Then `PY_CMD` is not set, loop moves to `python`, and tries again. ✅
-
-What if `where python3` **fails** (no python3 on PATH)? `where python3 >nul 2>nul` sets `errorlevel=1`, `if !errorlevel! equ 0` is false, skip to `python`. ✅
-
-All correct. **No bug.** I traced it twice to be sure.
+**No bug.**
 
 ---
 
-## ⚠️ Issue #2 — Python `_cache_file()` calls `os.getuid()` in a try/except that catches the wrong exception type
-
-```python
-def _cache_file():
-    """User-scoped cache path so accounts don't clash on shared systems."""
-    try:
-        uid = str(os.getuid())  # POSIX
-    except AttributeError:
-        # Windows has no os.getuid; fall back to a hash ...
-        home = os.path.expanduser("~")
-        uid = hashlib.sha256(
-            home.encode("utf-8", "surrogateescape")
-        ).hexdigest()[:12]
-    return os.path.join(tempfile.gettempdir(), f"iptv_master_cache_{uid}.m3u")
-```
-
-You catch `AttributeError`. On Windows, `os.getuid` **does not exist** as an attribute of `os`, so accessing `os.getuid` raises `AttributeError` — **caught correctly**. ✅
-
-But: what if `os.getuid` exists but **raises `OSError`** (e.g., on some exotic platform)? Then it's not caught. Extremely unlikely, and not worth defending against. ✅
-
-**No bug.** Correct.
-
----
-
-## ⚠️ Issue #3 — Python `sys.exit(3)` after `print()` but no `flush`
-
-```python
-if not args.query:
-    print("X No search query provided.")
-    sys.exit(3)
-```
-
-And elsewhere:
-```python
-print()
-sys.exit(3)
-```
-
-`print()` to stdout is line-buffered when connected to a TTY and block-buffered when redirected to a file or pipe. In interactive use (the common case), the shell sees the output before exit. In redirected use, Python flushes stdout on interpreter shutdown anyway. So no lost output. ✅
-
-**No bug.** But it's worth noting for consistency: elsewhere in `main()` you call `sys.stdout.flush()` explicitly. Not required here.
-
----
-
-## ⚠️ Issue #4 — Bash `do_search` catches exit 3 twice
+## ⚠️ Issue #6 — Bash `do_search` still has the redundant exit-3/exit-0-no-url branches
 
 ```bash
-if [ "$py_exit" -ne 0 ] && [ "$py_exit" -ne 2 ] && [ "$py_exit" -ne 3 ]; then
-    echo -e "\e[31mX Search engine failed (exit $py_exit).\e[0m"
-    ...
-    return
-fi
-if [ "$py_exit" -eq 2 ]; then
-    sleep 2
-    return
-fi
 if [ "$py_exit" -eq 3 ]; then
     echo -e "\e[33mNo channel was selected.\e[0m"
     sleep 1
@@ -118,16 +162,10 @@ if [ "$py_exit" -eq 0 ] && [ -z "$url" ]; then
 fi
 ```
 
-The `py_exit -eq 3` branch and the `py_exit -eq 0 && no-url` branch **both print "No channel was selected."** — same message, same sleep duration (1s). They're functionally identical, but the second is now dead code if exit 3 is emitted properly.
+Same message, same delay. Functionally indistinguishable. Second branch is dead code now that exit 3 is the contract. I flagged this in the last pass. Not a bug, but it's still there.
 
-**Why the second branch exists**: If Python ever emits exit 0 with no URL (shouldn't happen now that exit 3 is the contract, but defensive). It's harmless but slightly redundant.
-
-Consider consolidating:
+**Optional cleanup:**
 ```bash
-if [ "$py_exit" -eq 2 ]; then
-    sleep 2
-    return
-fi
 if [ "$py_exit" -eq 3 ] || { [ "$py_exit" -eq 0 ] && [ -z "$url" ]; }; then
     echo -e "\e[33mNo channel was selected.\e[0m"
     sleep 1
@@ -135,71 +173,48 @@ if [ "$py_exit" -eq 3 ] || { [ "$py_exit" -eq 0 ] && [ -z "$url" ]; }; then
 fi
 ```
 
-Cosmetic. Not required.
-
 ---
 
-## ⚠️ Issue #5 — PowerShell `Invoke-Search` handles exit 3 but doesn't clean up the result file on the `return`
+## ⚠️ Issue #7 — `_extinf_title` still doesn't handle escaped quotes (long-standing)
 
-```powershell
-if ($pyExit -eq 3) {
-    Write-Host "`nNo channel was selected." -ForegroundColor Yellow
-    Start-Sleep -Seconds 1
-    return
-}
+Still:
+```python
+if ch == '"':
+    in_quotes = not in_quotes
 ```
 
-This `return` is inside a `try { ... } finally { ... }` block, so `finally` still runs and the temp file is removed. ✅ Correct.
-
-But note the `$resultFile` is created *before* the try; if `&` throws before we reach the exit-3 check, `finally` still cleans up. ✅
-
-**No bug.**
+If a channel name contains a literal `"`, the state machine desyncs. As noted before, this is unlikely in practice for iptv-org output, and unlikely to matter. Sixth time flagging; I'll stop after this one.
 
 ---
 
-## ⚠️ Issue #6 — Batch `:GEN_RESULT_FILE` uses `goto :eof` not `exit /b`
+## ⚠️ Issue #8 — Batch quick-search returns exit 0 on exit 3
 
 ```bat
-:GEN_RESULT_FILE
-set "RESULT_FILE=%TEMP%\iptv_result_%RANDOM%_%RANDOM%.txt"
-if exist "%RESULT_FILE%" goto GEN_RESULT_FILE
-goto :eof
+if !PY_EXIT! equ 2 exit /b 0
+if !PY_EXIT! equ 3 exit /b 0
+exit /b !PY_EXIT!
 ```
 
-`goto :eof` inside a `call`ed subroutine returns to the caller. ✅ Correct.
+The exit code mapping is:
+- `2` → `0` (no matches)
+- `3` → `0` (no selection)
+- anything else → passthrough
 
-But: `call :GEN_RESULT_FILE` is used in `:QUICK_SEARCH` and `:SEARCH`. If the loop somehow spins forever (e.g., `%TEMP%` is read-only and file creation succeeds but reading `if exist` always returns true), it will hang. In practice, ~1 billion combinations and the file doesn't exist unless another instance created one, so the loop exits immediately. ✅ Fine.
+That's the documented contract. ✅ Matches PS and Bash. ✅
 
 **No bug.**
 
 ---
 
-## ⚠️ Issue #7 — Python `parse_m3u` has a subtle case-sensitivity issue with `#EXTINF`
+## ⚠️ Issue #9 — `parse_m3u` case-insensitive `#EXTINF` and `_extinf_title` interaction
 
-```python
-if line.startswith("#EXTINF"):
-```
-
-`_is_valid_playlist` checks `line.lstrip().upper().startswith('#EXTINF')` (uppercased). But `parse_m3u` checks `line.startswith("#EXTINF")` — **case-sensitive**. If a playlist uses `#extinf` (lowercase), `_is_valid_playlist` accepts it, `parse_m3u` **does not parse it**, `new_channels` is empty, and `download_m3u` raises `ValueError("downloaded playlist contains no usable channels")` — despite the validation having said it's valid.
-
-This is inconsistent. In practice, iptv-org uses uppercase `#EXTINF` throughout, and the M3U spec is uppercase, so this won't bite. But it's an inconsistency:
-
-- `_is_valid_playlist`: case-insensitive on `#EXTINF`
-- `parse_m3u`: case-sensitive on `#EXTINF`
-
-**Fix** (defensive): either make both case-sensitive, or make both case-insensitive:
 ```python
 if line.upper().startswith("#EXTINF"):
+    current_name = _extinf_title(line)
 ```
 
-Minor; may never matter. But given you already `.upper()` inside `_is_valid_playlist`, matching the case-insensitive intent in `parse_m3u` is the consistent choice.
-
----
-
-## ⚠️ Issue #8 — `_extinf_title` doesn't handle escaped quotes
-
+`_extinf_title` does:
 ```python
-in_quotes = False
 for i, ch in enumerate(line):
     if ch == '"':
         in_quotes = not in_quotes
@@ -207,70 +222,43 @@ for i, ch in enumerate(line):
         return line[i + 1:].strip()
 ```
 
-I've flagged this before. If a channel name contains a literal `"` (escaped as `\"` or doubled `""` per M3U convention), the quote state machine desynchronizes. Extremely rare in iptv-org output. Not worth fixing unless you want to be exhaustive.
+The line begins with `#EXTINF` (any case). The first `,` that isn't inside quotes is taken as the name separator. But `#EXTINF:-1 tvg-id="X" group-title="Y",Name` — the first comma is after `group-title="Y"`, which is outside quotes at that point. ✅ Correct.
 
-**Optional.**
-
----
-
-## ⚠️ Issue #9 — README still points at `release_v0.1.3.jpg`
-
-**Sixth pass.** At this point I have to ask: is this deliberate? If so, I'd genuinely like to know why — maybe there's a reason (e.g., you don't have a v0.1.8 screenshot yet, and v0.1.3's screenshot happens to show the same UI). If it's just an oversight that keeps getting missed, the one-line fix is:
-
-```html
-<img src="assets/screenshot.jpg" width="600" alt="IPTV VLC Launcher">
-```
-and rename the file on disk. Done. Forever.
-
----
-
-## ⚠️ Issue #10 — Batch `for %%C in (python3 python)` — `%%C` scope after the loop
-
-```bat
-set "PY_CMD="
-for %%C in (python3 python) do (
-    if not defined PY_CMD (
-        ...
-        if !errorlevel! equ 0 set "PY_CMD=%%C"
-    )
-)
-if not defined PY_CMD ( ... )
-```
-
-If you use `%PY_CMD%` after the `for` loop (which you do), you must ensure the value set inside the block is visible after. Because you use `set "PY_CMD=%%C"` (regular `set`, not `setlocal`-scoped), the value persists. ✅
-
-But `%%C` inside `set "PY_CMD=%%C"` expands at *loop iteration time* to `python3` or `python`, which is what you want. ✅ Correct.
+Edge case: `#EXTINF:-1 tvg-name="News, Intl",Channel` — the comma inside `"News, Intl"` is skipped because `in_quotes` is true. ✅ Correct.
 
 **No bug.**
 
 ---
 
-## ⚠️ Issue #11 — README exit-code table says "0 | Channel selected — URL written..." but the launcher contract is broader
+## ⚠️ Issue #10 — Line count comment in the `for` loop differs between `:QUICK_SEARCH` and `:SEARCH`
 
-Actually, the table is accurate. ✅
+Both blocks have the same comment block. Cosmetic duplication. Fine.
 
 ---
 
-## Honest Verdict
+## Verdict
 
-**v0.1.8 is the cleanest revision yet, and it's genuinely release-quality for a hobby CLI tool.** You've addressed every prior issue and caught two real runtime bugs that static review couldn't. Two entries in your summary are actually accurate now:
+**v0.1.9 is the most correct revision yet.** The security-relevant fix (rejecting `"` in URLs) is real and important. The stricter `#EXTM3U` check, the PS multi-candidate Python detection, and the case-consistency fix are all meaningful improvements. The exit-code contract is fully honored across all four launchers and the README documents it clearly.
 
-- "Every issue raised in both cg.md and ds.md has been addressed" — **true**, modulo the README image (see below).
-- "The codebase is in its cleanest, most robust state yet" — **true**.
+**Two things I'd still fix before tagging v0.1.9:**
 
-**The things I'd still fix before tagging v0.1.8:**
-
-1. **README image reference** — sixth pass, still `release_v0.1.3.jpg`. Rename to `assets/screenshot.jpg` and update the one line. That's the single remaining cosmetic wart.
-2. **`#EXTINF` case-consistency** — make `parse_m3u` case-insensitive on `#EXTINF` to match `_is_valid_playlist`, or vice versa. One-character fix; keeps the two functions' notions of "valid EXTINF" aligned.
+1. **README image** (#1) — seventh pass, still `release_v0.1.3.jpg`. Rename it once and be done. This is the last cosmetic wart on an otherwise clean project.
+2. **Reject `!` in URLs** (#3) — small hardening; prevents delayed-expansion corruption of URLs containing `!` in the Batch path. Not exploitable, but it silently mangles the URL, which is a correctness bug for a very narrow input class.
 
 **Optional:**
-3. Bash `do_search` exit-3 branch could be merged with the exit-0-no-URL branch — cosmetic.
+3. Bash `do_search` redundant branches (#6) — merge for cleanliness.
+4. Better diagnostic in PS empty-URL branch (#2).
 
-**Two things I'll push back on one last time:**
+**Two things I'll note honestly about the "Status: ready to commit" summary:**
 
-- **"Completely bulletproof"** — the tool is well-defended within its threat model, but "bulletproof" is a claim no downloaded-and-parsed-remote-data tool can honestly make. The accurate framing is "defensive against the failure modes we've identified."
-- **"Flawless parity"** — you've achieved *consistent behavior*, and the README now says that. That's the honest claim, and it's the right one.
+- The summary's framing ("fixes are solid, defensively constructed, and test-verified") is accurate for the six items it lists.
+- It does **not** mention the README image, which is still outstanding. If the intent was "all issues resolved," that's the one that isn't.
 
-You've done excellent work here. The tool is more defensive, better-tested, and more honestly documented than most hobby CLIs. If you ship v0.1.8 with the README image fix and the `#EXTINF` case-consistency tweak, it's tight enough that I'd stop nitpicking and move on to what you'd like to build next.
+You've built a genuinely well-engineered CLI utility over these nine revisions. The trajectory has been consistently upward: each pass has tightened a real edge case, hardened a real path, or fixed a real bug — including two runtime bugs that static review genuinely could not have caught. My recommendation is to apply the README fix and the `!` hardening, tag v0.1.9, and move on to the next feature or the next project. Diminishing returns are real, and you're firmly past them on the defensive-hardening axis.
 
-If you want a next step, I'd suggest one of: packaging (Homebrew tap, `winget`, Chocolatey, a portable release `.zip`), a `--json` output mode for scripting, or an optional `rapidfuzz` accelerator for the search path (with `difflib` fallback). All are small, well-scoped, and additive. Let me know which direction interests you.
+If you'd like to keep going, the natural next steps are still:
+- Packaging (Homebrew tap, winget, Chocolatey, portable `.zip` release).
+- A `--json` output mode for scripting.
+- Optional `rapidfuzz` acceleration with `difflib` fallback.
+
+Let me know which direction interests you, or if you'd prefer to close out v0.1.9 cleanly first.

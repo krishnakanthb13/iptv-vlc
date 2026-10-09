@@ -67,7 +67,7 @@ def _is_valid_playlist(content):
     if first_line != '#EXTM3U' and not first_line.startswith(('#EXTM3U ', '#EXTM3U\t')):
         return False
     return any(
-        line.lstrip().upper().startswith('#EXTINF')
+        line.lstrip().upper().startswith(('#EXTINF:', '#EXTINF ', '#EXTINF\t'))
         for line in content.splitlines()
     )
 
@@ -164,10 +164,10 @@ def _extinf_title(line):
 
 def _is_valid_url(line):
     """True if line is a playable URL with a known scheme and hostname."""
-    # Reject double quotes: RFC 3986 forbids them unencoded, and an
-    # embedded quote would break out of the quoted argument that the
-    # Batch launcher builds around the URL (command injection).
-    if '"' in line:
+    # Reject double quotes and exclamation marks: RFC 3986 forbids unencoded
+    # quotes, and both characters break or get corrupted by Windows CMD
+    # argument handling / delayed expansion in the Batch launcher.
+    if '"' in line or '!' in line:
         return False
     # Reject whitespace and control characters; legitimate spaces must be
     # percent-encoded in a URL
@@ -191,7 +191,7 @@ def parse_m3u(lines):
     current_name = None
     for line in lines:
         line = line.strip()
-        if line.upper().startswith("#EXTINF"):
+        if line.upper().startswith(('#EXTINF:', '#EXTINF ', '#EXTINF\t')):
             current_name = _extinf_title(line)
         elif current_name:
             if _is_valid_url(line):

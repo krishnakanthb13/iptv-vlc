@@ -1,7 +1,7 @@
 # IPTV VLC Launcher v0.1.9
 
 <p align="center">
-  <img src="assets/release_v0.1.3.jpg" width="600" alt="IPTV VLC Launcher">
+  <img src="assets/screenshot.jpg" width="600" alt="IPTV VLC Launcher">
 </p>
 
 A lightweight, menu-driven PowerShell, Batch, and Bash launcher for streaming global IPTV playlists directly in VLC Media Player, categorized by region, language, and genre. Features a **Global Fuzzy Search Engine** with smart caching.

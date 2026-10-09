@@ -1,47 +1,61 @@
-## Additional findings in v0.1.8
+# IPTV VLC Launcher v0.1.9 — independent code audit
 
-P1
+Verdict: The major fixes appear present, but I would make two final consistency improvements before calling this release-ready. I checked the newly uploaded Python, Batch, PowerShell, Bash, wrapper, and README files rather than relying solely on the change summary.
 
-1\. URL validation still permits a Windows command-line injection edge case
-
-The Python validator accepts `https://example.com/"&whoami` as a valid URL. I confirmed this against the uploaded Python file.&#x20;
-
-
-
-Because the Batch launcher inserts the selected URL into a quoted CMD command, an embedded double quote can break out of the quoted argument. Since playlist content is downloaded externally, this deserves attention.
-
-Fix: Reject double quotes in `_is_valid_url()` and add regression tests for quotes combined with `&`, `|`, and other shell metacharacters. Review PowerShell argument handling for the same class of issue.
+## Findings
 
 P2
 
-2\. PowerShell interactive search silently accepts an inconsistent success result
+1\. PowerShell quick search still silently accepts an empty result
 
-If Python exits with code `0` but the result file is missing or empty, `Invoke-Search` does not report that inconsistency. Bash and Batch already display a no-selection message for an empty result.
+In `IPTV_Launcher.ps1`, the quick-search branch reads the result file only when Python exits with code `0`. If the file exists but is empty—or is unexpectedly absent—the launcher skips VLC and still exits successfully.
 
-Fix: In PowerShell, explicitly check for a nonempty URL after exit code `0`; show a clear message instead of silently returning.
+The interactive `Invoke-Search` path handles this correctly, but the quick-search path does not have equivalent feedback.
+
+Recommended fix: When Python returns `0`, require a nonempty URL before reporting success. Otherwise, print a clear diagnostic and use a documented exit-code policy.
+
+P2
+
+2\. Batch quick search relies on `%*` argument forwarding
+
+The Batch launcher invokes Python using `%PY_CMD% ... --query %*`. Quoted multiword arguments should work in ordinary cases, but this approach deserves explicit testing with special characters and delayed expansion enabled.
+
+In particular, channel names containing `!` can be altered by CMD's delayed-expansion behavior. This is primarily an input-handling and compatibility edge case, not evidence of a new confirmed command-injection vulnerability.
+
+Recommended fix: Test quick searches containing `!`, `&`, `%`, parentheses, spaces, and Unicode. If necessary, revise argument forwarding so that user input survives Batch parsing intact.
 
 P3
 
-3\. Playlist header validation could be stricter
+3\. Playlist validation could also tighten `#EXTINF` matching
 
-`startswith('#EXTM3U')` correctly accepts attributed headers, but also accepts malformed prefixes such as `#EXTM3Ufoo`. The current parser can still extract a usable channel from such content, so this is a validation-quality issue rather than evidence of cache poisoning.&#x20;
+The header validation is now appropriately stricter. However, both the playlist validator and parser use `startswith('#EXTINF')` semantics, which can accept malformed directive names such as `#EXTINFORMATION`.
 
-iptv_search.py
+Recommended fix: If strict playlist validation is intended, require the `#EXTINF` token to be followed by a valid delimiter. Add malformed-directive tests to avoid rejecting legitimate playlist variants.
 
+## Verification summary
 
+Python syntax
 
-Fix: Require `#EXTM3U` to be followed by whitespace or the end of the header line.
+Compilation and AST parsing passed.
 
-## Verification status
+Bash syntax
 
-- Python compilation: passed.
+`bash -n` passed for the uploaded launcher.
 
-- Bash syntax check: passed.
+Previous fixes retained
 
-- Attributed M3U headers and normal HTTPS URLs: passed.
+Double-quote URL rejection, stricter M3U header validation, and PowerShell candidate iteration are present in the uploaded files.
 
-- Embedded-quote URL test: exposes a validation weakness.&#x20;
+Native Windows testing
 
-- Native Windows Batch/PowerShell execution and actual VLC playback: not verified in this environment.
+Batch and PowerShell execution, real multi-Python detection, and VLC playback were not verified here.
 
-Verdict: v0.1.8 is a meaningful improvement, but I would hold the release for the URL-quoting issue. Once that is fixed and tested against the Windows launch paths, the remaining items are smaller consistency and validation improvements.
+## Recommended release checklist
+
+- Fix or explicitly document PowerShell quick-search behavior when Python reports success but produces no URL.
+- Test Batch quick search with special characters and multiword channel names.
+- Add regression tests for malformed `#EXTINF` directives.
+- On Windows, exercise all 25 menu options, interactive search outcomes, quick search, cancellation, and missing Python/VLC scenarios.
+- Confirm version `0.1.9` appears consistently in all launcher files and documentation.
+
+Overall assessment: v0.1.9 is a substantial improvement over the earlier revisions. I found no new confirmed critical issue in this review, but syntax checks alone do not establish cross-platform functional parity. After the two P2 items are resolved or consciously accepted, the project will be in a stronger position for release.

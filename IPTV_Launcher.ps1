@@ -5,7 +5,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 # --- CONFIGURATION ---
 $FuzzyThreshold = 0.7
-$ScriptVersion = "0.1.4"
+$ScriptVersion = "0.1.5"
 # ---------------------
 
 # Quick search: if a query was passed as argument, skip menu
@@ -123,6 +123,7 @@ function Invoke-Search {
     # Use a temp file so Python can run fully interactively on the console.
     $resultFile = [System.IO.Path]::GetTempFileName()
     $tString = $FuzzyThreshold.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    $pyExit = 1
     try {
         # Run Python interactively
         & $pythonCmd.Source "$SearchScript" --threshold $tString --output-file "$resultFile"

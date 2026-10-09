@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 title IPTV VLC Launcher
 color 0A
-set "SCRIPT_VERSION=0.1.4"
+set "SCRIPT_VERSION=0.1.5"
 
 :: --------------------------------------------------
 :: CONFIGURATION
@@ -266,13 +266,16 @@ goto MENU
 set "new_t="
 set /p new_t=Enter new sensitivity (0.1 - 1.0): 
 if not defined new_t goto MENU
-:: More robust validation
-echo %new_t%| findstr /r "^0\.[0-9][0-9]*$ ^1\.[0][0]*$ ^1$ ^\.[0-9][0-9]*$" >nul 2>nul
+:: More robust validation. First digit after the dot must be 1-9 so
+:: values below 0.1 (0.0, 0.01, .0) are rejected.
+echo %new_t%| findstr /r "^0\.[1-9][0-9]*$ ^1\.[0][0]*$ ^1$ ^\.[1-9][0-9]*$" >nul 2>nul
 if errorlevel 1 (
     echo Invalid value. Must be between 0.1 and 1.0 (e.g. 0.5, 0.75, 1.0)
     timeout /t 2 >nul
     goto MENU
 )
+:: Normalize ".5" style input to "0.5"
+if "%new_t:~0,1%"=="." set "new_t=0%new_t%"
 set "FUZZY_THRESHOLD=%new_t%"
 echo Sensitivity updated to %FUZZY_THRESHOLD%
 timeout /t 1 >nul

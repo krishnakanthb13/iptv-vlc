@@ -1,115 +1,91 @@
-# IPTV Launcher v0.1.3 — Revision 7 Audit
+# IPTV VLC Launcher v0.1.4 — Revision 8 Audit
 
-This revision addresses several of the earlier findings. The Python search engine now preserves the old cache for a failed forced refresh, supports additional VLC stream protocols, and returns exit code `2` for no search results. The Bash launcher also checks the Python result and uses a Bash 3.2-compatible approach to lowercase menu input.
-
-The revision is improved, but a few integrity and cross-platform issues remain. I’m focusing on whether the implementation actually satisfies the README’s claims, not just whether the files compile.
-
-## 1. Verification so far
-
-Python compilation
-
-Passed with the available Python interpreter.
-
-Bash syntax
-
-Passed with `bash -n`; macOS runtime compatibility still requires an actual Bash 3.2 test.
-
-Forced-refresh fallback
-
-The previous cache is retained in memory and returned if the download raises an exception.
-
-Windows and live-stream testing
-
-Not yet verified by executing the batch and PowerShell launchers on Windows or opening live streams in VLC.
-
-## 2. Confirmed remaining findings
-
-High
-
-A. Channel names containing commas are truncated
-
-The parser uses `line.rfind(',')`, which returns only the text after the last comma. My test with `News, International` returned just `International`.&#x20;
+The latest revision has meaningful improvements. Python compilation and Bash syntax checks pass, and the earlier malformed-hostname issue appears fixed. However, I would not yet call this release-ready: I found a remaining cache-validation defect and a sensitivity-validation mismatch that contradict the documented `0.1–1.0` range.&#x20;
 
 
 
-Fix: Identify the `EXTINF` separator outside quoted attributes and preserve the entire display name. This also brings the implementation into line with the README's claim about comma-containing names.
+## Findings
 
-Medium
+1\. Playlist validation can still poison the cache
 
-B. Hostname validation is still incomplete
+High priority
 
-The parser checks `parsed.netloc`, but that field can be non-empty even when the hostname is missing. The test accepted `http://:8080/live` as a channel URL.&#x20;
+`_is_valid_playlist()` checks for an `#EXTM3U` first line and the presence of `#EXTINF` somewhere in the content. It does not verify that the download contains even one parseable channel before replacing the existing cache.
+
+I tested three invalid playlist bodies: a bare `#EXTINF` line, an invalid stream URL, and a comment containing `#EXTINF`. All three passed the current validation, yet parsed into zero channels.&#x20;
 
 
 
-Fix: Require a non-empty `parsed.hostname`, reject malformed ports, and handle parsing exceptions. Keep the supported protocol list configurable or clearly documented.
+Fix: Parse and validate the downloaded playlist before `os.replace()`. Require at least one usable channel entry, and keep the existing cache if validation fails. Consider validating cached content too before returning it.
 
-Medium
+2\. Sensitivity validation accepts values below 0.1
 
-C. A successful HTTP response can still poison the cache
+Medium priority
 
-The downloader atomically replaces the cache after writing the response, but it does not validate the downloaded content before replacement. A server or proxy returning an HTML error page with HTTP status 200 could replace a working playlist.
-
-Fix: Validate that the downloaded content has a plausible M3U header and usable entries before replacing the existing cache. Clean up temporary files on failure.
-
-Medium
-
-D. Batch mode can mistake a missing Python script for a successful no-result search
-
-The quick-search branch in `IPTV_Launcher(7).bat` invokes `iptv_search.py` without first checking that the file exists. It then treats exit code `2` as benign. Python can also return code `2` for command-line usage errors or a missing script.
-
-Fix: Check the script's existence before invocation and distinguish no matches from actual execution errors. A dedicated no-match exit code should not collide with Python's normal argument-parsing error code.
-
-Low
-
-E. Cache temporary-file handling can be stronger
-
-The cache temporary filename is predictable and based on the process ID. Atomic replacement is a good improvement, but secure temporary-file creation, cleanup, and validation would provide better protection against stale files and unexpected filesystem conditions.
-
-## 3. Regression tests to add
-
-These should be automated before the next release.
-
-### Next-release test checklist
-
-0/10
-
-Preserve complete channel names containing commas.
-
-Reject HTTP URLs without a hostname or with an invalid port.
-
-Accept valid HTTP, HTTPS, RTSP and other explicitly supported schemes.
-
-Retain the previous cache when forced refresh fails.
-
-Retain the previous cache when a server returns invalid playlist content.
-
-Handle interrupted writes and remove abandoned temporary files.
-
-Return distinct outcomes for no matches, cancellation and execution errors.
-
-Handle missing Python scripts and missing VLC installations.
-
-Verify multi-word Windows queries and queries containing exclamation marks.
-
-Verify all 25 menu options and case-insensitive menu commands.
-
-&#x20;Copy test checklist
-
-## 4. Release recommendation
-
-The latest version is moving in the right direction, and the basic syntax checks pass. The most important remaining work is:
-
-1. Fix M3U title parsing.
-2. Strengthen URL validation.
-3. Validate downloaded playlists before replacing the cache.
-4. Correct batch missing-script and exit-code handling.
-5. Add regression tests for the behaviors above.
-
-The README should continue to describe only functionality verified in the code and tests. In particular, “cross-platform parity” and “robust URL validation” should be treated as release criteria, not assumed outcomes.&#x20;
+The Bash expression accepts decimal values such as `0.01` and `0.0`; the Batch `findstr` patterns also permit values below the documented minimum. The Python CLI subsequently rejects these values, so the shell launchers can accept a setting that the search engine will not accept. The README documents the supported range as `0.1–1.0`.&#x20;
 
 README.md
 
 
 
-I have not modified your uploaded files. This is a review of revision 7; Windows runtime behavior, macOS Bash 3.2 execution, and live VLC playback remain unverified.
+Fix: Apply a numeric range check after validating the input's format in both shells. Keep `.5` support if desired, but normalize it to `0.5` and reject values below `0.1` or above `1.0`.
+
+3\. Bash invokes Python without quoting the executable path
+
+Low priority
+
+The launcher stores the detected interpreter in `python_cmd` but invokes it as `$python_cmd` rather than `"$python_cmd"`.&#x20;
+
+IPTV_Launcher.sh
+
+
+
+This normally works when Python is found through a conventional PATH entry, but can fail if the interpreter path contains spaces.
+
+Fix: Invoke `"$python_cmd"` consistently, including both quick-search and interactive-search paths.
+
+4\. README claims still exceed what the tests establish
+
+The README describes robust URL validation, correct parsing, and identical cross-platform behavior.&#x20;
+
+README.md
+
+&#x20;Those are reasonable goals, but syntax checks and targeted Python tests do not establish full parity across Windows Batch, PowerShell, Linux, and macOS.
+
+
+
+Fix: Treat the documented behaviors as explicit regression-test requirements rather than considering them verified solely from code inspection.
+
+## What is working well
+
+- Python compilation: passed.
+
+- Bash syntax: passed.&#x20;
+
+- Channel names containing commas: the new title parser correctly preserves `News, International`.&#x20;
+
+- Malformed URLs: `http://:8080/live` and an out-of-range port are rejected, while valid HTTPS and UDP examples are accepted.&#x20;
+
+- Cache writes: the implementation uses a temporary file and atomic replacement, with cleanup on failure.
+
+- Exit-code handling: the Python CLI reserves exit code `2` for no search matches, while translating argparse usage errors to `1`.
+
+## Recommended release gate
+
+### Release verification checklist
+
+0 of 6
+
+Validate downloaded playlists contain at least one usable channel before replacing the cache.
+
+Test malformed downloads and confirm a previously working cache remains unchanged.
+
+Reject sensitivity values below 0.1 and above 1.0 in both shell launchers.
+
+Run quick-search, cancellation, no-match, missing-script, and Python-error scenarios.
+
+Test Windows argument handling and verify VLC launches with the selected URL.
+
+Run end-to-end tests on actual Windows, Linux, and macOS environments.
+
+Verdict: v0.1.4 is improved, but I recommend holding the release until the playlist-validation and sensitivity-range defects are fixed. This was a static and targeted test audit; I have not verified actual VLC playback or executed the Windows launchers on Windows. I have not modified your uploaded files.

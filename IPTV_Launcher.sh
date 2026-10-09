@@ -3,7 +3,7 @@
 
 # --- CONFIGURATION ---
 FUZZY_THRESHOLD=0.7
-SCRIPT_VERSION="0.1.4"
+SCRIPT_VERSION="0.1.5"
 # ---------------------
 
 # Detect VLC
@@ -35,7 +35,7 @@ if [ $# -gt 0 ]; then
         exit 1
     fi
     result_file=$(mktemp)
-    $python_cmd "$SEARCH_SCRIPT" --query "$query" --threshold "$FUZZY_THRESHOLD" --output-file "$result_file"
+    "$python_cmd" "$SEARCH_SCRIPT" --query "$query" --threshold "$FUZZY_THRESHOLD" --output-file "$result_file"
     py_exit=$?
     url=$(cat "$result_file" 2>/dev/null)
     rm -f "$result_file"
@@ -135,7 +135,7 @@ do_search() {
     local result_file
     result_file=$(mktemp)
     # Run Python interactively; it writes the selected URL to the temp file
-    $python_cmd "$SEARCH_SCRIPT" --threshold "$FUZZY_THRESHOLD" --output-file "$result_file"
+    "$python_cmd" "$SEARCH_SCRIPT" --threshold "$FUZZY_THRESHOLD" --output-file "$result_file"
     local py_exit=$?
 
     local url
@@ -145,6 +145,11 @@ do_search() {
     if [ "$py_exit" -eq 1 ]; then
         echo -e "\e[31mX Search engine failed (exit 1).\e[0m"
         read -r -p "Press Enter to continue..."
+        return
+    fi
+    if [ "$py_exit" -eq 2 ]; then
+        # No matches - Python already printed "No channels found"
+        sleep 2
         return
     fi
 
@@ -171,7 +176,10 @@ while true; do
         t)
             read -r -p "Enter new sensitivity (0.1 - 1.0): " t
             # Validate: must be a number between 0.1 and 1.0
-            if [[ "$t" =~ ^0?\.[0-9]+$|^1(\.0+)?$ ]]; then
+            # First digit after the dot must be 1-9 so values < 0.1 (0.0, 0.01) are rejected
+            if [[ "$t" =~ ^0?\.[1-9][0-9]*$|^1(\.0+)?$ ]]; then
+                # Normalize ".5" style input to "0.5"
+                [[ "$t" == .* ]] && t="0$t"
                 FUZZY_THRESHOLD=$t
                 echo -e "\e[32mSensitivity updated to $FUZZY_THRESHOLD\e[0m"
                 sleep 1

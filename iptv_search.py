@@ -21,7 +21,7 @@ def _cache_file():
 CACHE_FILE = _cache_file()
 CACHE_EXPIRY = 3600 * 24  # 24 hours
 DOWNLOAD_TIMEOUT = 60  # seconds
-SCRIPT_VERSION = "0.1.4"
+SCRIPT_VERSION = "0.1.5"
 
 def _read_cache():
     """Read and return lines from cache if it exists, else None."""
@@ -60,6 +60,11 @@ def _is_valid_playlist(content):
     return '#EXTINF' in content.upper()
 
 
+def _has_usable_channels(lines):
+    """True if the playlist lines parse into at least one usable channel."""
+    return bool(parse_m3u(lines))
+
+
 def download_m3u(force_refresh=False):
     """Downloads the master M3U list and caches it to disk for 24 hours."""
     cache_age = _cache_age_hours()
@@ -69,7 +74,7 @@ def download_m3u(force_refresh=False):
     if not force_refresh:
         if cache_age is not None and cache_age * 3600 < CACHE_EXPIRY:
             lines = _read_cache()
-            if lines:
+            if lines and _has_usable_channels(lines):
                 cache_time = _cache_timestamp()
                 print(f"[i] Using cached playlist ({cache_age}h old, from {cache_time})")
                 return lines
@@ -86,6 +91,9 @@ def download_m3u(force_refresh=False):
         # Validate before touching the cache so a bad response can't poison it
         if not _is_valid_playlist(content):
             raise ValueError("downloaded content is not a valid M3U playlist")
+        new_lines = content.splitlines(True)
+        if not _has_usable_channels(new_lines):
+            raise ValueError("downloaded playlist contains no usable channels")
         cache_dir = os.path.dirname(CACHE_FILE) or "."
         with tempfile.NamedTemporaryFile(
             mode='w', encoding='utf-8', dir=cache_dir,
@@ -95,16 +103,16 @@ def download_m3u(force_refresh=False):
             f.write(content)
         os.replace(temp_cache, CACHE_FILE)
         temp_cache = None
-        return content.splitlines(True)
+        return new_lines
     except Exception as e:
         print(f"X Download failed: {e}", flush=True)
         # For forced refresh, keep the old cache if the download failed
-        if force_refresh and old_lines:
+        if force_refresh and old_lines and _has_usable_channels(old_lines):
             print("[!] Download failed - keeping existing cached playlist")
             return old_lines
         if cache_age is not None:
             lines = _read_cache()
-            if lines:
+            if lines and _has_usable_channels(lines):
                 print(f"[!] Falling back to cached playlist ({cache_age}h old)")
                 return lines
         sys.exit(1)
@@ -204,6 +212,10 @@ def fuzzy_search(query, channels, threshold, limit):
 
 def main():
     parser = argparse.ArgumentParser(description="IPTV Channel Search Engine")
+    parser.add_argument(
+        "--version", action="version",
+        version=f"iptv_search {SCRIPT_VERSION}"
+    )
     parser.add_argument("--query", help="Channel name to search (prompted if omitted)")
     parser.add_argument(
         "--threshold", type=float, default=0.7,

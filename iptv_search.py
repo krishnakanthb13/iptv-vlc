@@ -10,10 +10,18 @@ import urllib.request as urllib_req  # Python 3
 
 # --- CONFIGURATION ---
 MASTER_URL = "https://iptv-org.github.io/iptv/index.m3u"
-CACHE_FILE = os.path.join(tempfile.gettempdir(), "iptv_master_cache.m3u")
+
+def _cache_file():
+    """User-scoped cache path so accounts don't clash on shared systems."""
+    uid = ""
+    if hasattr(os, "getuid"):
+        uid = f"_{os.getuid()}"
+    return os.path.join(tempfile.gettempdir(), f"iptv_master_cache{uid}.m3u")
+
+CACHE_FILE = _cache_file()
 CACHE_EXPIRY = 3600 * 24  # 24 hours
 DOWNLOAD_TIMEOUT = 60  # seconds
-SCRIPT_VERSION = "0.1.3"
+SCRIPT_VERSION = "0.1.4"
 
 def _read_cache():
     """Read and return lines from cache if it exists, else None."""
@@ -41,6 +49,17 @@ def _cache_timestamp():
     return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(os.path.getmtime(CACHE_FILE)))
 
 
+def _is_valid_playlist(content):
+    """Check that downloaded content looks like a real M3U playlist."""
+    if not content:
+        return False
+    head = content.lstrip('﻿\r\n \t')
+    first_line = head.split('\n', 1)[0].strip().upper()
+    if first_line != '#EXTM3U':
+        return False
+    return '#EXTINF' in content.upper()
+
+
 def download_m3u(force_refresh=False):
     """Downloads the master M3U list and caches it to disk for 24 hours."""
     cache_age = _cache_age_hours()
@@ -57,20 +76,29 @@ def download_m3u(force_refresh=False):
 
     print("\n[!] Downloading master channel list (30,000+ channels)...")
     start_time = time.time()
+    temp_cache = None
     try:
         req = urllib_req.Request(MASTER_URL, headers={"User-Agent": "iptv-vlc-launcher/1.0"})
         with urllib_req.urlopen(req, timeout=DOWNLOAD_TIMEOUT) as response:
             content = response.read().decode('utf-8', errors='ignore')
         elapsed = time.time() - start_time
         print(f"[i] Download completed in {elapsed:.1f}s")
-        temp_cache = f"{CACHE_FILE}.tmp.{os.getpid()}"
-        with open(temp_cache, 'w', encoding='utf-8') as f:
+        # Validate before touching the cache so a bad response can't poison it
+        if not _is_valid_playlist(content):
+            raise ValueError("downloaded content is not a valid M3U playlist")
+        cache_dir = os.path.dirname(CACHE_FILE) or "."
+        with tempfile.NamedTemporaryFile(
+            mode='w', encoding='utf-8', dir=cache_dir,
+            prefix='iptv_cache_', suffix='.tmp', delete=False
+        ) as f:
+            temp_cache = f.name
             f.write(content)
         os.replace(temp_cache, CACHE_FILE)
+        temp_cache = None
         return content.splitlines(True)
     except Exception as e:
         print(f"X Download failed: {e}", flush=True)
-        # For forced refresh, try to restore old cache if download failed
+        # For forced refresh, keep the old cache if the download failed
         if force_refresh and old_lines:
             print("[!] Download failed - keeping existing cached playlist")
             return old_lines
@@ -80,23 +108,55 @@ def download_m3u(force_refresh=False):
                 print(f"[!] Falling back to cached playlist ({cache_age}h old)")
                 return lines
         sys.exit(1)
+    finally:
+        if temp_cache and os.path.exists(temp_cache):
+            try:
+                os.remove(temp_cache)
+            except OSError:
+                pass
+
+
+VALID_SCHEMES = ("http", "https", "rtsp", "rtmp", "udp", "rtp", "mms")
+
+def _extinf_title(line):
+    """Return the display name from an #EXTINF line.
+
+    The name is everything after the first comma that is not inside a
+    double-quoted attribute, so names containing commas are preserved.
+    """
+    in_quotes = False
+    for i, ch in enumerate(line):
+        if ch == '"':
+            in_quotes = not in_quotes
+        elif ch == ',' and not in_quotes:
+            return line[i + 1:].strip()
+    return None
+
+
+def _is_valid_url(line):
+    """True if line is a playable URL with a known scheme and hostname."""
+    try:
+        parsed = urlparse(line)
+        if parsed.scheme.lower() not in VALID_SCHEMES:
+            return False
+        if not parsed.hostname:
+            return False
+        _ = parsed.port  # raises ValueError on a malformed port
+    except ValueError:
+        return False
+    return True
 
 
 def parse_m3u(lines):
     """Parses M3U lines into a list of dicts with 'name' and 'url'."""
-    VALID_SCHEMES = ("http", "https", "rtsp", "rtmp", "udp", "rtp", "mms")
     channels = []
     current_name = None
     for line in lines:
         line = line.strip()
         if line.startswith("#EXTINF"):
-            # Name is everything after the last comma
-            comma_idx = line.rfind(',')
-            if comma_idx != -1:
-                current_name = line[comma_idx + 1:].strip()
+            current_name = _extinf_title(line)
         elif current_name:
-            parsed = urlparse(line)
-            if parsed.scheme.lower() in VALID_SCHEMES and parsed.netloc:
+            if _is_valid_url(line):
                 channels.append({"name": current_name, "url": line})
                 current_name = None
             elif not line or line.startswith("#"):
@@ -161,7 +221,11 @@ def main():
         "--force-refresh", action="store_true",
         help="Force fresh download ignoring cache"
     )
-    args = parser.parse_args()
+    try:
+        args = parser.parse_args()
+    except SystemExit as e:
+        # argparse exits 2 on usage errors; reserve 2 for "no matches"
+        sys.exit(1 if e.code == 2 else e.code)
 
     # Validate threshold
     if not (0.1 <= args.threshold <= 1.0):

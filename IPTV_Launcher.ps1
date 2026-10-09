@@ -5,7 +5,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 # --- CONFIGURATION ---
 $FuzzyThreshold = 0.7
-$ScriptVersion = "0.1.3"
+$ScriptVersion = "0.1.4"
 # ---------------------
 
 # Quick search: if a query was passed as argument, skip menu
@@ -30,6 +30,7 @@ if ($args.Count -gt 0) {
     if (-not (Test-Path $SearchScript)) { Write-Host "X iptv_search.py not found." -ForegroundColor Red; exit 1 }
     $resultFile = [System.IO.Path]::GetTempFileName()
     $tString = $FuzzyThreshold.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    $pyExit = 1
     try {
         & $pythonCmd.Source "$SearchScript" --query "$query" --threshold $tString --output-file "$resultFile"
         $pyExit = $LASTEXITCODE

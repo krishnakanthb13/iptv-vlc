@@ -1,4 +1,4 @@
-# IPTV VLC Launcher v0.1.3
+# IPTV VLC Launcher v0.1.4
 
 <p align="center">
   <img src="assets/release_v0.1.3.jpg" width="600" alt="IPTV VLC Launcher">
@@ -80,6 +80,8 @@ To bypass the 24-hour cache and force a fresh download:
 ```bash
 python iptv_search.py --query "Discovery" --force-refresh
 ```
+
+Note: force refresh is currently only available via the Python CLI, not through the menu launchers. A failed forced refresh keeps the previous cache as a fallback.
 
 ## Code Functionality Documentation
 

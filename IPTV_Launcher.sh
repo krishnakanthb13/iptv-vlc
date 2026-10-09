@@ -3,7 +3,7 @@
 
 # --- CONFIGURATION ---
 FUZZY_THRESHOLD=0.7
-SCRIPT_VERSION="0.1.3"
+SCRIPT_VERSION="0.1.4"
 # ---------------------
 
 # Detect VLC
@@ -39,7 +39,7 @@ if [ $# -gt 0 ]; then
     py_exit=$?
     url=$(cat "$result_file" 2>/dev/null)
     rm -f "$result_file"
-    if [ -n "$url" ] && [ -n "$py_exit" ] && [ "$py_exit" -eq 0 ]; then
+    if [ -n "$url" ] && [ "$py_exit" -eq 0 ]; then
         "$VLC" "$url" &
         exit 0
     fi
@@ -136,10 +136,17 @@ do_search() {
     result_file=$(mktemp)
     # Run Python interactively; it writes the selected URL to the temp file
     $python_cmd "$SEARCH_SCRIPT" --threshold "$FUZZY_THRESHOLD" --output-file "$result_file"
+    local py_exit=$?
 
     local url
     url=$(cat "$result_file" 2>/dev/null)
     rm -f "$result_file"
+
+    if [ "$py_exit" -eq 1 ]; then
+        echo -e "\e[31mX Search engine failed (exit 1).\e[0m"
+        read -r -p "Press Enter to continue..."
+        return
+    fi
 
     if [ -n "$url" ]; then
         echo -e "\e[32mLaunching VLC...\e[0m"

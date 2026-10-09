@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 title IPTV VLC Launcher
 color 0A
-set "SCRIPT_VERSION=0.1.3"
+set "SCRIPT_VERSION=0.1.4"
 
 :: --------------------------------------------------
 :: CONFIGURATION
@@ -182,6 +182,12 @@ if !errorlevel! neq 0 (
     exit /b 1
 )
 
+if not exist "%~dp0iptv_search.py" (
+    echo X iptv_search.py not found.
+    pause
+    exit /b 1
+)
+
 set "RESULT_FILE=%TEMP%\iptv_result_%RANDOM%.txt"
 if exist "%RESULT_FILE%" del "%RESULT_FILE%"
 
@@ -200,8 +206,8 @@ if defined RESULT_URL (
         start "" "%VLC%" "%RESULT_URL%"
     )
 )
-if %PY_EXIT% equ 2 exit /b 0
-exit /b %PY_EXIT%
+if !PY_EXIT! equ 2 exit /b 0
+exit /b !PY_EXIT!
 
 :: --------------------------------------------------
 :SEARCH
@@ -221,6 +227,12 @@ if !errorlevel! equ 0 (
 %PY_CMD% --version >nul 2>nul
 if !errorlevel! neq 0 (
     echo X Python not found. Please install Python 3 to use search.
+    pause
+    goto MENU
+)
+
+if not exist "%~dp0iptv_search.py" (
+    echo X iptv_search.py not found.
     pause
     goto MENU
 )
@@ -255,7 +267,7 @@ set "new_t="
 set /p new_t=Enter new sensitivity (0.1 - 1.0): 
 if not defined new_t goto MENU
 :: More robust validation
-echo %new_t% | findstr /r "^0\.[0-9][0-9]*$ ^1\.0+$ ^1$" >nul 2>nul
+echo %new_t%| findstr /r "^0\.[0-9][0-9]*$ ^1\.[0][0]*$ ^1$ ^\.[0-9][0-9]*$" >nul 2>nul
 if errorlevel 1 (
     echo Invalid value. Must be between 0.1 and 1.0 (e.g. 0.5, 0.75, 1.0)
     timeout /t 2 >nul
@@ -292,9 +304,6 @@ echo.
 echo REQUIREMENTS:
 echo   - Python 3.6+ (https://www.python.org/downloads/)
 echo   - VLC Media Player (https://www.videolan.org/)
-echo.
-echo SOURCE:
-echo   https://github.com/user/iptv-vlc
 echo.
 echo ========================================================================
 echo.

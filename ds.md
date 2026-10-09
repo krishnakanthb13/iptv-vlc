@@ -1,171 +1,243 @@
-This is a much improved second revision. You've clearly addressed the feedback from the first pass. Here's a focused re-review, flagging what's fixed, what's still off, and one or two new nits.
-
-## What's Fixed ✅
-
-| # | Previous Issue | Status |
-|---|----------------|--------|
-| 10 | `IPTV_Launcher_ps.bat` not forwarding args | **Fixed** — now uses `%*` |
-| 2 | PowerShell `$LASTEXITCODE` stale after exception | **Fixed** — captures `$code` in try/catch |
-| 1 | PS quick-search `& $pythonCmd` vs `$pythonCmd.Source` | **Fixed** — uses `.Source` consistently |
-| 6 | Cache write race | **Fixed** — atomic `os.replace` via temp file |
-| 9 | Silent exit on no results | **Fixed** — `sys.exit(1)` on failures |
-| 3 | Batch `%errorlevel%` in blocks | **Fixed** — uses `!errorlevel!` |
-| — | URL validation | **Improved** — `urlparse` scheme check for `http`/`https` only |
-| — | README | **Added** — comprehensive and accurate |
-
-The atomic cache write in `download_m3u` is particularly clean:
-```python
-temp_cache = f"{CACHE_FILE}.tmp.{os.getpid()}"
-with open(temp_cache, 'w', ...) as f:
-    f.write(content)
-os.replace(temp_cache, CACHE_FILE)
-```
-Good — `os.replace` is atomic on POSIX and Windows when source/dest are on the same volume.
+Excellent work — this is a very solid v0.1.3. Nearly every issue from the previous reviews has been addressed. Below is a focused final-pass review with a few remaining nits, one or two of which are subtle but worth fixing.
 
 ---
 
-## Remaining Issues
+## ✅ Confirmed Fixed
 
-### 1. Python: `sys.exit(1)` on "no matches" breaks interactive re-search
-```python
-if not matches:
-    ...
-    sys.exit(1)
-```
-In **quick-search mode** (`--query` provided), exiting 1 is correct — the shell wrapper checks `$py_exit -eq 0`. But in **interactive mode** (`S` from the menu), a "no results" exit code 1 gets surfaced by the shell as a failure:
+| Item | Status |
+|------|--------|
+| `IPTV_Launcher_ps.bat` forwards `%*` | ✅ |
+| PowerShell `$LASTEXITCODE` captured inside try | ✅ |
+| `Get-Command -CommandType Application` for Python | ✅ |
+| Batch `where python3` → `where python` fallback | ✅ |
+| Batch `!errorlevel!` (delayed expansion) | ✅ |
+| Exit code `2` = "no results" convention | ✅ Consistent across Bash / Batch / PS / Python |
+| `VALID_SCHEMES` extended (`rtsp`, `rtmp`, `udp`, `rtp`, `mms`) | ✅ |
+| `parsed.netloc` check on URL | ✅ |
+| Forced-refresh preserves old cache on failure | ✅ Nice touch |
+| Atomic cache write via `os.replace` | ✅ |
+| `-T` → `T` in Python message | ✅ |
+| README image version matches | ✅ |
+| `get_url "$choice_lc"` (lowercased) | ✅ |
 
-- **Bash**: `do_search` ignores `$?` for interactive — fine, but the user sees nothing after "No channels found."
-- **PowerShell**: `Invoke-Search` prints `[!] Search engine closed or failed (Exit Code: 1)` — misleading, since it's a legitimate "no results" case, not a crash.
-- **Batch**: `:SEARCH` ignores `%errorlevel%` — fine.
+---
 
-**Fix:** distinguish "no results" from "error." Options:
-- Exit `2` for no-results, `1` for real errors; launchers treat `2` as benign.
-- Or don't `sys.exit(1)` on no-results — just `return`, and let the empty result file signal "nothing selected" (which all three launchers already handle).
+## Remaining Issues (roughly in priority order)
 
-### 2. Bash `do_search` doesn't check exit code
+### 1. Bash `do_search` — `py_exit` can be unset; also doesn't handle `2`
 ```bash
 $python_cmd "$SEARCH_SCRIPT" --threshold "$FUZZY_THRESHOLD" --output-file "$result_file"
 local url
 url=$(cat "$result_file" 2>/dev/null)
+rm -f "$result_file"
+if [ -n "$url" ]; then
+    echo -e "\e[32mLaunching VLC...\e[0m"
+    "$VLC" "$url" &
+    sleep 1
+fi
 ```
-If Python crashes before writing the file, `$url` is empty → the `if [ -n "$url" ]` silently does nothing. That's OK, but the user has no indication. Minor.
+This is the **interactive** path (menu `S`). It does **not** capture `$?`, so:
+- If Python exits with code `2` ("no matches"), the user gets only the Python-side "[!] No channels found" message. No crash, no VLC. **OK.**
+- If Python exits with code `1` (network/download failure), the user likewise sees only Python's error. **OK**, but no shell-side message.
 
-### 3. Bash `get_url` called with un-lowercased `$choice`
+This is fine as-is, but the interactive path is now *inconsistent* with the quick-search path (which captures and interprets `$py_exit`). Not a bug, but worth noting for uniformity. You may want:
 ```bash
-case "$choice_lc" in
-    ...
-    *) url=$(get_url "$choice") ;;
-```
-Numeric options are unaffected, and `s`/`t` are handled earlier, so this only matters if the user types something like `0x10` or `1 ` (space). Minor.
-
-### 4. Batch `:SENSITIVITY` regex still rejects `1`
-```bat
-findstr /r "^0\.[0-9][0-9]*$ ^1\.0+$"
-```
-`1` (no decimal) → rejected. Python clamps to 1.0 anyway. Decide if you want to accept bare `1`. Also note: `findstr /r` uses **spaces as OR separators** here, which is what you want. OK.
-
-### 5. PowerShell: `& $pythonCmd.Source --version` — `.Source` on a CommandInfo
-`Get-Command python` returns an `ApplicationInfo` object with a `.Source` property containing the full path. Good. But if the user has a PowerShell **function** or **alias** named `python` (e.g., a wrapper), `Get-Command python` returns that instead, and `.Source` may be empty. Consider `Get-Command python -CommandType Application` to force an executable lookup:
-
-```powershell
-$found = Get-Command $cmd -CommandType Application -ErrorAction SilentlyContinue
+local py_exit=$?
+if [ "$py_exit" -eq 1 ]; then
+    echo -e "\e[31mSearch engine failed (exit $py_exit).\e[0m"
+    read -r -p "Press Enter to continue..."
+fi
 ```
 
-### 6. Batch: `%PY_EXIT%` evaluated inside parenthesized `if`
+### 2. Bash quick-search — `[ -n "$py_exit" ] && [ "$py_exit" -eq 0 ]` is redundant
+```bash
+if [ -n "$url" ] && [ -n "$py_exit" ] && [ "$py_exit" -eq 0 ]; then
+```
+`$py_exit` is always set by `py_exit=$?` immediately after the command. The `-n "$py_exit"` guard is dead code. Minor, harmless.
+
+### 3. Batch `%PY_EXIT%` outside the `if defined` block, `!PY_EXIT!` inside
 ```bat
 if defined RESULT_URL (
-    if %PY_EXIT% equ 0 (
+    if !PY_EXIT! equ 0 (
         start "" "%VLC%" "%RESULT_URL%"
     )
 )
+if %PY_EXIT% equ 2 exit /b 0
+exit /b %PY_EXIT%
 ```
-`%PY_EXIT%` is expanded **when the block is parsed**, which is fine here since `PY_EXIT` was set before the `if`. But the outer `if defined RESULT_URL (` is also parsed before `RESULT_URL` is (re)set... actually no — `set /p RESULT_URL=<...` runs before this block, so it's fine. Still, using `!PY_EXIT!` inside a block would be safer and consistent with the `EnableDelayedExpansion` you already set. Same pattern in `:SEARCH` — `%RESULT_URL%` is expanded at parse time of the `if` block, but since it's set in the preceding non-block command, it works.
+Two different expansion styles for the same variable in adjacent lines. Both work here because `PY_EXIT` isn't modified inside a block, but the mixed style invites future bugs. Pick `!PY_EXIT!` throughout (you already have `EnableDelayedExpansion`).
 
-### 7. `urlparse` accepts relative-ish inputs
-```python
-parsed = urlparse(line)
-if parsed.scheme in ("http", "https"):
-```
-`urlparse("http://")` succeeds with empty netloc — technically a valid scheme. Extremely unlikely from iptv-org. Fine.
-
-### 8. Python: `--threshold` validation logic
-```python
-if args.threshold < 0.1 or args.threshold > 1.0 or not (0.1 <= args.threshold <= 1.0):
-```
-The first two clauses are redundant with the third. And the third is the negation of the valid range, so this reads as: "error if (too low) or (too high) or (not in range)" — logically correct but stylistically noisy. Simplify to:
-```python
-if not (0.1 <= args.threshold <= 1.0):
-```
-
-### 9. `_read_cache` returns `readlines()` but `download_m3u` returns `content.splitlines(True)`
-Both preserve line endings, so `parse_m3u` (which `.strip()`s each line) works uniformly. Consistent. Good.
-
-### 10. `parse_m3u` — `elif current_name:` branch
-```python
-elif current_name:
-    parsed = urlparse(line)
-    if parsed.scheme in ("http", "https"):
-        channels.append(...)
-        current_name = None
-    elif not line or line.startswith("#"):
-        pass
-    else:
-        current_name = None
-elif not line or line.startswith("#"):
-    pass
-else:
-    current_name = None
-```
-Reasonable. But note: if a URL is a non-http scheme (e.g., `rtmp://`, `udp://`, `rtsp://`), it now silently drops the channel *and* resets `current_name`. iptv-org does include some non-http streams. Consider also accepting `rtsp`, `rtmp`, `udp`, `mms`, and `rtp`:
-
-```python
-VALID_SCHEMES = ("http", "https", "rtsp", "rtmp", "udp", "rtp", "mms")
-if parsed.scheme.lower() in VALID_SCHEMES:
-```
-
-This is likely a **functional regression** vs. the previous `line.startswith("http")` check for streams that VLC *can* play but which aren't http(s). Worth confirming.
-
-### 11. Windows Batch: `python "%~dp0iptv_search.py"` vs. `python3`
-On Windows, `python` may resolve to the MS Store stub. The Batch launchers only try `python` (never `python3`), while PowerShell tries both. If a user has only `python3.exe` (e.g., via the python.org installer's `py` launcher variants), Batch fails. Consider:
+### 4. Batch `%~1 NEQ ""` doesn't handle quoted-empty args
 ```bat
-where python3 >nul 2>nul && set "PY=python3" || set "PY=python"
+if "%~1" NEQ "" (
+    goto QUICK_SEARCH
+)
 ```
-And validate with `%PY% --version` before use.
+If someone runs `IPTV_Launcher.bat ""` (an explicit empty arg), `%~1` is empty, so this test fails and the menu opens. That's probably desired behavior. OK.
 
-### 12. Bash: `[ $py_exit -eq 0 ]` — quoted `$py_exit` not needed (integer), fine. But `$py_exit` could be empty if the command somehow didn't run — guard with `[ -n "$py_exit" ] && [ "$py_exit" -eq 0 ]`. Extremely defensive; skip.
-
-### 13. README references `assets/release_v0.0.4.png`
-Version mismatch: README says v0.1.0 but the asset filename is `release_v0.0.4.png`. Cosmetic, but confusing.
-
-### 14. README says "Use `-T` in the launcher" (from Python error message)
-Actually the Python message says:
+But **multi-word args**: `IPTV_Launcher.bat BBC News` → `%~1` is `BBC`, `%*` is `BBC News`. The check `"%~1" NEQ ""` passes, and `%*` is passed to Python as two separate arguments. Then Python argparse sees `--query BBC News` and errors ("unrecognized arguments: News") — unless the user quotes:
+```bat
+IPTV_Launcher.bat "BBC News"
 ```
-Try lowering the sensitivity with -T in the launcher.
+The README's examples all use quotes, so this is documented. But an unwary user typing `IPTV_Launcher.bat BBC News` will get a cryptic argparse error. Consider joining `%*` via `%~1`-style quoting, or just document it clearly (which you do).
+
+**Suggested hardening** (optional): detect unquoted multi-arg:
+```bat
+set "QUERY=%*"
+if not "%QUERY%"=="" goto QUICK_SEARCH
 ```
-But the launcher uses `T` (no dash). The `-T` is a Python-CLI flag convention; fix to just `T`:
+Then pass `--query "%QUERY%"`. This collapses multi-arg into one quoted string. Actually you already pass `%*` unquoted to Python; wrapping it would be:
+```bat
+%PY_CMD% "%~dp0iptv_search.py" --query "%*" --threshold ...
+```
+But then a legitimately quoted `"BBC News"` becomes `""BBC News""` — messy. The cleanest fix is to pass `%*` as-is and document the quoting requirement, which the README does. Leave as is.
+
+### 5. Python: `fuzzy_search` performance on 30k channels
+`difflib.SequenceMatcher(...).ratio()` per channel × 30k channels is roughly 1–3 seconds on a modern CPU for short queries. Not a bug, but for a "fuzzy search engine," this is the slowest part of the tool. Optional future improvement: pre-lowercase channel names once and store them alongside, or use `rapidfuzz` if available with a `difflib` fallback:
+
 ```python
-print("    Try lowering the sensitivity with T in the launcher.")
+try:
+    from rapidfuzz import fuzz, process
+    HAVE_RAPIDFUZZ = True
+except ImportError:
+    HAVE_RAPIDFUZZ = False
+```
+
+Not required for correctness.
+
+### 6. Python: cache file is global, not per-user
+```python
+CACHE_FILE = os.path.join(tempfile.gettempdir(), "iptv_master_cache.m3u")
+```
+On a shared multi-user machine, `/tmp/iptv_master_cache.m3u` (or `%TEMP%` if `TEMP` is user-scoped — it usually is on Windows) is world-writable on POSIX. A malicious local user could pre-create a symlink or a poisoned cache. Low severity for a hobby tool, but easy to fix:
+```python
+CACHE_FILE = os.path.join(tempfile.gettempdir(), f"iptv_master_cache_{os.getuid()}.m3u")
+```
+`os.getuid()` doesn't exist on Windows — guard with `hasattr(os, "getuid")`, or better, use `tempfile.gettempdir()` + a user-scoped subdir, or `platformdirs.user_cache_dir`.
+
+### 7. PowerShell: `$pyExit` may be `$null` if Python crashed before setting `$LASTEXITCODE`
+```powershell
+& $pythonCmd.Source "$SearchScript" --query "$query" --threshold $tString --output-file "$resultFile"
+$pyExit = $LASTEXITCODE
+```
+If PowerShell throws (e.g., command not found — unlikely since we validated), `$LASTEXITCODE` may retain a stale value. You already catch in `Invoke-Search` but not in the quick-search block:
+```powershell
+try {
+    & $pythonCmd.Source "$SearchScript" ...
+    $pyExit = $LASTEXITCODE
+    ...
+} finally {
+    ...
+}
+if ($pyExit -eq 2) { exit 0 }
+if ($pyExit -ne 0) { exit $pyExit }
+```
+If `&` throws, `$pyExit` is never assigned, then `if ($pyExit -ne 0)` compares `$null -ne 0` → `$true` → `exit $null` → exit 0. Slightly surprising but benign. Add `$pyExit = 1` before the try for safety, or wrap the call site in try/catch.
+
+### 8. PowerShell: `$LASTEXITCODE` after `--version` inside try
+```powershell
+try { & $found.Source --version 2>$null; $code = $LASTEXITCODE } catch { $code = 1 }
+```
+Good fix. But if `$found.Source` is `$null` (shouldn't happen with `-CommandType Application`, but defensively), `&` throws, `$code = 1`, loop continues. Fine.
+
+### 9. `parse_m3u`: `parsed.netloc` rejects `udp://@239.1.1.1:1234`?
+For `udp://@239.1.1.1:1234`, `urlparse` gives `netloc = "@239.1.1.1:1234"` (non-empty). ✅
+For `udp://239.1.1.1:1234` → `netloc = "239.1.1.1:1234"`. ✅
+For `rtp://@239.1.1.1` → `netloc = "@239.1.1.1"`. ✅
+For `mms://example.com/stream` → netloc set. ✅
+
+But: `rtsp://` with empty netloc → rejected. Correct.
+
+One edge case: `http:///path` → `netloc = ""` → rejected. Good — that's a malformed URL.
+
+No issue here.
+
+### 10. `SENSITIVITY` regex — `^1$` now accepted, but `1.5` still rejected, `1.00` accepted
+```bat
+findstr /r "^0\.[0-9][0-9]*$ ^1\.0+$ ^1$"
+```
+- `1` ✅
+- `1.0` ✅
+- `1.00` ✅
+- `0.5` ✅
+- `0.` ❌ (correctly rejected)
+- `.5` ❌ — note this differs from Bash, which accepts `.5`
+
+**Parity gap**: Bash's regex `^0?\.[0-9]+$` accepts `.5`, `.75`; Batch requires `0.5`, `0.75`. Both then clamp in Python. Minor cosmetic inconsistency; decide whether `.5` should be valid. Consistent behavior would be nice.
+
+### 11. Bash `t` validation accepts `1.00000000000000000000`
+Regex `^1(\.0+)?$` — yes, accepts arbitrarily many zeros. Then `FUZZY_THRESHOLD` holds a long string, passed to Python as `--threshold 1.00000000000000000000`. Python `float()` parses it fine → `1.0`. Harmless.
+
+### 12. README: "Force Refresh" section says `python iptv_search.py --query ... --force-refresh`
+This is a Python-CLI invocation, not a launcher invocation. Fine, but the launchers do not expose `--force-refresh` through the menu or quick-search. So the user has to call Python directly. Worth a one-line note in the README:
+> Force refresh is currently only available via the Python CLI, not through the menu launchers.
+
+### 13. `assets/release_v0.1.3.jpg` — reference but no file shown
+Just confirm the asset exists in the repo; the README will 404 otherwise. (The previous review's `.png` → `.jpg` change is fine if the file matches.)
+
+### 14. Cosmetic: `IPTV_Launcher.bat` `H` help shows "SOURCE: https://github.com/user/iptv-vlc"
+Placeholder URL. Replace with the real repo path if public.
+
+---
+
+## Two Suggested Small Patches
+
+### A. Bash `do_search` — surface real errors
+```bash
+    $python_cmd "$SEARCH_SCRIPT" --threshold "$FUZZY_THRESHOLD" --output-file "$result_file"
+    local py_exit=$?
+    local url
+    url=$(cat "$result_file" 2>/dev/null)
+    rm -f "$result_file"
+
+    if [ "$py_exit" -eq 1 ]; then
+        echo -e "\e[31mX Search engine failed (exit 1).\e[0m"
+        read -r -p "Press Enter to continue..."
+        return
+    fi
+    if [ -n "$url" ]; then
+        echo -e "\e[32mLaunching VLC...\e[0m"
+        "$VLC" "$url" &
+        sleep 1
+    fi
+```
+
+### B. Python cache — user-scoped name
+```python
+import platform
+_uid = ""
+if hasattr(os, "getuid"):
+    _uid = f"_{os.getuid()}"
+CACHE_FILE = os.path.join(tempfile.gettempdir(), f"iptv_master_cache{_uid}.m3u")
 ```
 
 ---
 
-## Minor Style Notes
+## Test Matrix (sanity)
 
-- **Consistent versioning**: `SCRIPT_VERSION` lives in 4 files. Consider reading from a `VERSION` file or generating at build time.
-- **`sys.exit(1)` import**: You use `sys.exit(1)` — already imported via `import sys`. Fine.
-- **Removed `import urllib2` fallback**: you now drop Python 2 support. Good call — Python 2 is EOL.
-- **PS `$LASTEXITCODE` after interactive Python**: after `& $pythonCmd.Source "$SearchScript" ...`, if the user hits Ctrl+C, `$LASTEXITCODE` may be `-1073741510` (STATUS_CONTROL_C_EXIT). Your check `-ne 0` prints `[!] Search engine closed or failed`. Acceptable, but you may want to special-case that.
+| Test | Expect |
+|------|--------|
+| `./IPTV_Launcher.sh "BBC News"` | Quick search → VLC or exit 2 (no results) |
+| `IPTV_Launcher.bat "BBC News"` | Same |
+| `.\IPTV_Launcher.ps1 "BBC"` | Same |
+| `IPTV_Launcher_ps.bat "CNN"` | Args forwarded, PS path runs |
+| Menu `S` → type → pick 0 | Returns to menu cleanly, no error banner |
+| Menu `S` → no matches | "No channels found" then menu; no `[!]` banner |
+| Menu `T` → `1` | Accepted (Batch: new; PS: yes; Bash: yes) |
+| Menu `T` → `1.5` | Rejected on all three |
+| `python iptv_search.py --query "zzzzz"` | Exit code 2 |
+| Kill network, fresh cache | Falls back to cache, or exits 1 if no cache |
+| `--force-refresh` with network down | Keeps old cache |
 
 ---
 
-## Recommended Priority Fixes
+## Verdict
 
-1. **`parse_m3u` scheme list** — decide if `rtsp`/`rtmp`/`udp` streams should be kept (functional regression risk).
-2. **Exit code semantics** — distinguish "no matches" from "error" so PowerShell's `Invoke-Search` doesn't print a scary message.
-3. **`Get-Command -CommandType Application`** in PowerShell Python detection.
-4. **Batch `python3` fallback** for systems where only `python3.exe` is on PATH.
-5. **Cosmetic**: fix `-T` → `T` in Python message; fix README image version.
+**v0.1.3 is release-quality for a hobby/tooling project.** The architecture is coherent, the exit-code contract is consistent, cross-platform parity is real, and the README is unusually thorough. The remaining items above are polish, not blockers.
 
-Nothing here is a showstopper — the codebase is now in good shape, with real hardening (atomic writes, validation, error propagation, proper arg forwarding). The URL scheme change is the only one I'd treat as a **potential bug** rather than a nit.
+If you want to land one more patch before tagging v0.2.0, I'd suggest:
+1. **Uniform Bash error reporting** in `do_search` (#1).
+2. **User-scoped cache path** (#6) — cheap defense-in-depth.
+3. **README note** that `--force-refresh` is Python-CLI only (#12).
 
-Want me to produce patches for any of these? The scheme-list and exit-code items are the two I'd suggest tackling first.
+Would you like me to draft a concrete diff for any of these?

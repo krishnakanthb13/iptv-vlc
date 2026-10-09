@@ -1,161 +1,171 @@
-I've reviewed all four files in your IPTV VLC Launcher project. Here's a comprehensive analysis of the codebase, its architecture, and some observations.
+This is a much improved second revision. You've clearly addressed the feedback from the first pass. Here's a focused re-review, flagging what's fixed, what's still off, and one or two new nits.
 
-## Project Overview
+## What's Fixed ✅
 
-This is a **cross-platform IPTV launcher** that opens IPTV playlists and searches channels via VLC Media Player. It's available in three launcher variants (Bash, Batch, PowerShell) that all share a common Python search engine (`iptv_search.py`). It pulls playlists from the [iptv-org](https://github.com/iptv-org/iptv) project.
+| # | Previous Issue | Status |
+|---|----------------|--------|
+| 10 | `IPTV_Launcher_ps.bat` not forwarding args | **Fixed** — now uses `%*` |
+| 2 | PowerShell `$LASTEXITCODE` stale after exception | **Fixed** — captures `$code` in try/catch |
+| 1 | PS quick-search `& $pythonCmd` vs `$pythonCmd.Source` | **Fixed** — uses `.Source` consistently |
+| 6 | Cache write race | **Fixed** — atomic `os.replace` via temp file |
+| 9 | Silent exit on no results | **Fixed** — `sys.exit(1)` on failures |
+| 3 | Batch `%errorlevel%` in blocks | **Fixed** — uses `!errorlevel!` |
+| — | URL validation | **Improved** — `urlparse` scheme check for `http`/`https` only |
+| — | README | **Added** — comprehensive and accurate |
 
-### File Roles
-
-| File | Platform | Purpose |
-|------|----------|---------|
-| `IPTV_Launcher.sh` | Linux / macOS | Bash menu + search launcher |
-| `IPTV_Launcher.bat` | Windows (CMD) | Batch menu + search launcher |
-| `IPTV_Launcher_ps.bat` | Windows | Thin wrapper that calls the `.ps1` |
-| `IPTV_Launcher.ps1` | Windows (PowerShell) | Full PowerShell launcher |
-| `iptv_search.py` | All | Shared fuzzy search engine |
-
----
-
-## Architecture Strengths
-
-1. **Shared search engine** — All launchers delegate to `iptv_search.py`, avoiding logic duplication. The `--output-file` pattern is a clean way to pass a result back to the parent shell without parsing stdout.
-
-2. **Cross-platform VLC detection** — Each launcher tries multiple install paths, which is realistic given VLC's inconsistent install locations.
-
-3. **Python 2/3 compatibility** — `iptv_search.py` handles both `urllib.request`/`urllib2` and `raw_input`/`input`.
-
-4. **Caching** — 24-hour cache for the ~30k-channel master list is a smart performance choice; re-downloading on every search would be painful.
-
-5. **Sensitivity tuning** — The `difflib.SequenceMatcher` scoring with substring/exact bonuses is a reasonable fuzzy-match heuristic, and exposing it via `T`/`S` is user-friendly.
-
-6. **Quick-search mode** — Passing a query as an argument (`IPTV_Launcher.bat "BBC News"`) makes the tools scriptable and shell-integratable.
-
----
-
-## Bugs & Issues
-
-### 1. PowerShell: `& $pythonCmd "$SearchScript"` — object vs string
-In `Invoke-Search`, you do `& $pythonCmd "$SearchScript" ...`. Earlier you set `$pythonCmd = $found` (a `CommandInfo` object), so `& $pythonCmd` works via its call operator, but in the quick-search block you use `& $pythonCmd.Source`. Inconsistent — pick one. Prefer `$pythonCmd.Source` in both places for clarity.
-
-### 2. PowerShell quick-search: `$LASTEXITCODE` not reset
-```powershell
-try { & $found.Source --version 2>$null } catch { }
-if ($LASTEXITCODE -eq 0) { $pythonCmd = $found; break }
-```
-If the `Get-Command` for `python3` succeeds but `--version` throws, `$LASTEXITCODE` may retain a stale value from a previous command. Set `$LASTEXITCODE = 0` (or `$global:LASTEXITCODE`) before the call, or use `$?`.
-
-### 3. Batch `%errorlevel%` and delayed expansion
-In `:SEARCH` and `:QUICK_SEARCH`:
-```bat
-python --version >nul 2>nul
-if %errorlevel% neq 0 (
-```
-This is evaluated *before* the `python` line in some parse scenarios when inside parenthesized blocks. Since it's not inside a block here it's OK, but note you enabled `EnableDelayedExpansion` and never use `!errorlevel!`. Consider `if errorlevel 1` for robustness, or `!errorlevel!`.
-
-### 4. Batch `set /p RESULT_URL=<file` with empty file
-`set /p` on an empty file leaves the variable **undefined** rather than empty — which you handle with `if defined RESULT_URL`, good. But if the URL contains special characters (`&`, `|`, `^`), `set /p` reading is safe, yet `start "" "%VLC%" "%RESULT_URL%"` with quotes is fine. OK here.
-
-### 5. Bash sensitivity regex rejects `0.5`? Let's check
-```bash
-if [[ "$t" =~ ^0?\.[0-9]+$|^1(\.0+)?$ ]]; then
-```
-- `0.5` → matches `^0?\.[0-9]+$` ✅
-- `.5`  → matches ✅
-- `1`   → matches `^1(\.0+)?$` ✅
-- `1.0` → matches ✅
-- `1.5` → no ✅ (correctly rejected)
-- `0`   → no ✅
-
-**But** `0.5` with leading `0?` — the `?` means optional, so `0.5` matches because `0?` consumes the `0`. Fine. However this permits `.5` which becomes `0.5` implicitly — VLC-side Python clamps anyway. Acceptable.
-
-### 6. Bash `get_url` uses positional echo but the `case` variable
-```bash
-url=$(get_url "$choice")
-```
-Inside `get_url`, `$1` is `$choice`. But **before** this, you lowercased the choice:
-```bash
-case "${choice,,}" in
-```
-The `case` matches lowercase, but the `*)` branch passes the **original** `$choice` to `get_url`. If the user typed `S` or `T`, those are caught earlier. Fine. But if they typed `１` (fullwidth) or `01`, `get_url 01` fails → "Invalid option." Acceptable.
-
-### 7. Python: cache write can race
-If two launchers run simultaneously, both may write `CACHE_FILE`. No locking. Low severity.
-
-### 8. Python: `parse_m3u` resets `current_name` on any non-http non-comment line
+The atomic cache write in `download_m3u` is particularly clean:
 ```python
+temp_cache = f"{CACHE_FILE}.tmp.{os.getpid()}"
+with open(temp_cache, 'w', ...) as f:
+    f.write(content)
+os.replace(temp_cache, CACHE_FILE)
+```
+Good — `os.replace` is atomic on POSIX and Windows when source/dest are on the same volume.
+
+---
+
+## Remaining Issues
+
+### 1. Python: `sys.exit(1)` on "no matches" breaks interactive re-search
+```python
+if not matches:
+    ...
+    sys.exit(1)
+```
+In **quick-search mode** (`--query` provided), exiting 1 is correct — the shell wrapper checks `$py_exit -eq 0`. But in **interactive mode** (`S` from the menu), a "no results" exit code 1 gets surfaced by the shell as a failure:
+
+- **Bash**: `do_search` ignores `$?` for interactive — fine, but the user sees nothing after "No channels found."
+- **PowerShell**: `Invoke-Search` prints `[!] Search engine closed or failed (Exit Code: 1)` — misleading, since it's a legitimate "no results" case, not a crash.
+- **Batch**: `:SEARCH` ignores `%errorlevel%` — fine.
+
+**Fix:** distinguish "no results" from "error." Options:
+- Exit `2` for no-results, `1` for real errors; launchers treat `2` as benign.
+- Or don't `sys.exit(1)` on no-results — just `return`, and let the empty result file signal "nothing selected" (which all three launchers already handle).
+
+### 2. Bash `do_search` doesn't check exit code
+```bash
+$python_cmd "$SEARCH_SCRIPT" --threshold "$FUZZY_THRESHOLD" --output-file "$result_file"
+local url
+url=$(cat "$result_file" 2>/dev/null)
+```
+If Python crashes before writing the file, `$url` is empty → the `if [ -n "$url" ]` silently does nothing. That's OK, but the user has no indication. Minor.
+
+### 3. Bash `get_url` called with un-lowercased `$choice`
+```bash
+case "$choice_lc" in
+    ...
+    *) url=$(get_url "$choice") ;;
+```
+Numeric options are unaffected, and `s`/`t` are handled earlier, so this only matters if the user types something like `0x10` or `1 ` (space). Minor.
+
+### 4. Batch `:SENSITIVITY` regex still rejects `1`
+```bat
+findstr /r "^0\.[0-9][0-9]*$ ^1\.0+$"
+```
+`1` (no decimal) → rejected. Python clamps to 1.0 anyway. Decide if you want to accept bare `1`. Also note: `findstr /r` uses **spaces as OR separators** here, which is what you want. OK.
+
+### 5. PowerShell: `& $pythonCmd.Source --version` — `.Source` on a CommandInfo
+`Get-Command python` returns an `ApplicationInfo` object with a `.Source` property containing the full path. Good. But if the user has a PowerShell **function** or **alias** named `python` (e.g., a wrapper), `Get-Command python` returns that instead, and `.Source` may be empty. Consider `Get-Command python -CommandType Application` to force an executable lookup:
+
+```powershell
+$found = Get-Command $cmd -CommandType Application -ErrorAction SilentlyContinue
+```
+
+### 6. Batch: `%PY_EXIT%` evaluated inside parenthesized `if`
+```bat
+if defined RESULT_URL (
+    if %PY_EXIT% equ 0 (
+        start "" "%VLC%" "%RESULT_URL%"
+    )
+)
+```
+`%PY_EXIT%` is expanded **when the block is parsed**, which is fine here since `PY_EXIT` was set before the `if`. But the outer `if defined RESULT_URL (` is also parsed before `RESULT_URL` is (re)set... actually no — `set /p RESULT_URL=<...` runs before this block, so it's fine. Still, using `!PY_EXIT!` inside a block would be safer and consistent with the `EnableDelayedExpansion` you already set. Same pattern in `:SEARCH` — `%RESULT_URL%` is expanded at parse time of the `if` block, but since it's set in the preceding non-block command, it works.
+
+### 7. `urlparse` accepts relative-ish inputs
+```python
+parsed = urlparse(line)
+if parsed.scheme in ("http", "https"):
+```
+`urlparse("http://")` succeeds with empty netloc — technically a valid scheme. Extremely unlikely from iptv-org. Fine.
+
+### 8. Python: `--threshold` validation logic
+```python
+if args.threshold < 0.1 or args.threshold > 1.0 or not (0.1 <= args.threshold <= 1.0):
+```
+The first two clauses are redundant with the third. And the third is the negation of the valid range, so this reads as: "error if (too low) or (too high) or (not in range)" — logically correct but stylistically noisy. Simplify to:
+```python
+if not (0.1 <= args.threshold <= 1.0):
+```
+
+### 9. `_read_cache` returns `readlines()` but `download_m3u` returns `content.splitlines(True)`
+Both preserve line endings, so `parse_m3u` (which `.strip()`s each line) works uniformly. Consistent. Good.
+
+### 10. `parse_m3u` — `elif current_name:` branch
+```python
+elif current_name:
+    parsed = urlparse(line)
+    if parsed.scheme in ("http", "https"):
+        channels.append(...)
+        current_name = None
+    elif not line or line.startswith("#"):
+        pass
+    else:
+        current_name = None
+elif not line or line.startswith("#"):
+    pass
 else:
     current_name = None
 ```
-Some M3U variants put `#EXTVLCOPT:...` lines between `#EXTINF` and the URL. Those start with `#`, so they're caught by the `elif not line or line.startswith("#")` branch — good. But a stray blank/whitespace line after `.strip()` is `""`, also caught. OK.
+Reasonable. But note: if a URL is a non-http scheme (e.g., `rtmp://`, `udp://`, `rtsp://`), it now silently drops the channel *and* resets `current_name`. iptv-org does include some non-http streams. Consider also accepting `rtsp`, `rtmp`, `udp`, `mms`, and `rtp`:
 
-### 9. Python: `--query` with no results still exits 0
-`main()` returns silently on no matches. The shell wrapper then finds an empty `result_file` and does nothing — correct behavior, but the user gets no feedback in quick-search mode. Consider writing a sentinel or exit code.
+```python
+VALID_SCHEMES = ("http", "https", "rtsp", "rtmp", "udp", "rtp", "mms")
+if parsed.scheme.lower() in VALID_SCHEMES:
+```
 
-### 10. PS1: `$args.Count -gt 0` but `IPTV_Launcher_ps.bat` passes no args
-The `.bat` wrapper:
+This is likely a **functional regression** vs. the previous `line.startswith("http")` check for streams that VLC *can* play but which aren't http(s). Worth confirming.
+
+### 11. Windows Batch: `python "%~dp0iptv_search.py"` vs. `python3`
+On Windows, `python` may resolve to the MS Store stub. The Batch launchers only try `python` (never `python3`), while PowerShell tries both. If a user has only `python3.exe` (e.g., via the python.org installer's `py` launcher variants), Batch fails. Consider:
 ```bat
-PowerShell.exe -ExecutionPolicy Bypass -File "%~dp0IPTV_Launcher.ps1"
+where python3 >nul 2>nul && set "PY=python3" || set "PY=python"
 ```
-never forwards `%*`. So calling `IPTV_Launcher_ps.bat "BBC News"` ignores the query. Should be:
-```bat
-PowerShell.exe -ExecutionPolicy Bypass -File "%~dp0IPTV_Launcher.ps1" %*
+And validate with `%PY% --version` before use.
+
+### 12. Bash: `[ $py_exit -eq 0 ]` — quoted `$py_exit` not needed (integer), fine. But `$py_exit` could be empty if the command somehow didn't run — guard with `[ -n "$py_exit" ] && [ "$py_exit" -eq 0 ]`. Extremely defensive; skip.
+
+### 13. README references `assets/release_v0.0.4.png`
+Version mismatch: README says v0.1.0 but the asset filename is `release_v0.0.4.png`. Cosmetic, but confusing.
+
+### 14. README says "Use `-T` in the launcher" (from Python error message)
+Actually the Python message says:
+```
+Try lowering the sensitivity with -T in the launcher.
+```
+But the launcher uses `T` (no dash). The `-T` is a Python-CLI flag convention; fix to just `T`:
+```python
+print("    Try lowering the sensitivity with T in the launcher.")
 ```
 
-### 11. PS1 quick-search: temp file in `finally` but `$resultFile` declared inside `if`
-```powershell
-if ($args.Count -gt 0) {
-    ...
-    $resultFile = [System.IO.Path]::GetTempFileName()
-    try { ... } finally { ... }
-    exit 0
-}
-```
-Scoped correctly within the block. Fine.
+---
 
-### 12. `IPTV_Launcher_ps.bat` naming inconsistency
-All other files use `IPTV_Launcher_<suffix>`; the PS wrapper is the only `.bat` that isn't the primary CMD launcher. Might confuse users. Consider `IPTV_Launcher_PS.bat` or documenting it.
+## Minor Style Notes
 
-### 13. Bash: `--threshold "$FUZZY_THRESHOLD"` may pass locale-decimal
-Bash is fine, but PowerShell explicitly uses `InvariantCulture` for threshold. The Bash and Batch versions don't, so on a comma-decimal locale (e.g. `de_DE`) Python's `float()` may fail. For Bash this is unlikely; for Batch, `python` uses C locale by default. Low risk but worth noting.
+- **Consistent versioning**: `SCRIPT_VERSION` lives in 4 files. Consider reading from a `VERSION` file or generating at build time.
+- **`sys.exit(1)` import**: You use `sys.exit(1)` — already imported via `import sys`. Fine.
+- **Removed `import urllib2` fallback**: you now drop Python 2 support. Good call — Python 2 is EOL.
+- **PS `$LASTEXITCODE` after interactive Python**: after `& $pythonCmd.Source "$SearchScript" ...`, if the user hits Ctrl+C, `$LASTEXITCODE` may be `-1073741510` (STATUS_CONTROL_C_EXIT). Your check `-ne 0` prints `[!] Search engine closed or failed`. Acceptable, but you may want to special-case that.
 
 ---
 
-## Security & Robustness Notes
+## Recommended Priority Fixes
 
-- **`--output-file` path from `mktemp` / `%RANDOM%`** is safe.
-- **URL from M3U is passed to VLC as an argument**, not a shell string, in Bash (`"$VLC" "$url"`) and PowerShell (`-ArgumentList`). In Batch, `start "" "%VLC%" "%RESULT_URL%"` — quoted, safe from injection.
-- **`CACHE_FILE` in `tempfile.gettempdir()`** is a shared location. On multi-user systems, another user could pre-create it. Consider a per-user subdir.
-- **No HTTPS verification override** — good.
+1. **`parse_m3u` scheme list** — decide if `rtsp`/`rtmp`/`udp` streams should be kept (functional regression risk).
+2. **Exit code semantics** — distinguish "no matches" from "error" so PowerShell's `Invoke-Search` doesn't print a scary message.
+3. **`Get-Command -CommandType Application`** in PowerShell Python detection.
+4. **Batch `python3` fallback** for systems where only `python3.exe` is on PATH.
+5. **Cosmetic**: fix `-T` → `T` in Python message; fix README image version.
 
----
+Nothing here is a showstopper — the codebase is now in good shape, with real hardening (atomic writes, validation, error propagation, proper arg forwarding). The URL scheme change is the only one I'd treat as a **potential bug** rather than a nit.
 
-## Suggested Improvements
-
-1. **Unify version constant** — `SCRIPT_VERSION` is duplicated in four files. Consider generating from one source or reading a `VERSION` file.
-2. **Forward args in `IPTV_Launcher_ps.bat`** (`%*`).
-3. **Add a `--json` mode to `iptv_search.py`** for programmatic consumption.
-4. **Batch `:SENSITIVITY` regex** — `findstr /r "^0\.[0-9][0-9]*$ ^1\.0+$"` rejects `1` (no decimal). Users typing `1` get an error. Decide if `1` should be allowed (Python clamps to `1.0` anyway).
-5. **Add a `README.md`** — the four launch files plus shared Python need a quick-start doc.
-6. **Consider replacing `difflib` with `rapidfuzz`** for speed on 30k entries — `difflib.ratio()` on 30k names per query can take a second or two. `rapidfuzz.process.extract` is ~50× faster. Optional dependency with fallback.
-7. **Cache invalidation message** — show remaining cache TTL, not just age.
-
----
-
-## Quick Verification Checklist
-
-| Test | Expected |
-|------|----------|
-| `IPTV_Launcher.sh` (no args) | Menu shows, options launch VLC |
-| `IPTV_Launcher.sh "BBC"` | Quick search → VLC |
-| `IPTV_Launcher.bat "ESPN"` | Quick search → VLC |
-| `IPTV_Launcher_ps.bat "CNN"` | **Currently broken** (args not forwarded) |
-| `IPTV_Launcher.ps1 "Discovery"` directly | Quick search → VLC |
-| `python iptv_search.py --query "news"` | Interactive top-N list |
-| `T` / sensitivity change | Persists for session only |
-
-The most impactful fix is **#10 — forwarding `%*` in `IPTV_Launcher_ps.bat`**, since it silently breaks quick-search for the PowerShell path.
-
-Would you like me to produce corrected versions of any specific file, or write a unified `README.md` for the project?
-
----
-**Update:** All highlighted issues have been successfully patched! This includes atomic cache writes, consistent `$pythonCmd.Source` usage in PowerShell, and delayed expansion `!errorlevel!` fixes in the Batch script.
+Want me to produce patches for any of these? The scheme-list and exit-code items are the two I'd suggest tackling first.

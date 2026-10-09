@@ -1,7 +1,7 @@
-# IPTV VLC Launcher v0.1.0
+# IPTV VLC Launcher v0.1.3
 
 <p align="center">
-  <img src="assets/release_v0.0.4.png" width="600" alt="IPTV VLC Launcher">
+  <img src="assets/release_v0.1.3.jpg" width="600" alt="IPTV VLC Launcher">
 </p>
 
 A lightweight, menu-driven PowerShell, Batch, and Bash launcher for streaming global IPTV playlists directly in VLC Media Player, categorized by region, language, and genre. Features a **Global Fuzzy Search Engine** with smart caching.
@@ -17,8 +17,8 @@ A lightweight, menu-driven PowerShell, Batch, and Bash launcher for streaming gl
 - **Fuzzy Matching**: Intelligent matching that handles typos and partial names.
 - **Search Sensitivity (`T`)**: Adjust the fuzzy logic sensitivity (0.1 to 1.0).
 - **Quick Search from CLI**: Pass a query directly as a command-line argument to skip the menu.
-- **Smart Caching**: Downloads the 30k master list once, caches it securely using atomic writes for 24 hours with age display and network failure fallback.
-- **Robust URL Validation**: Stricter `http`/`https` scheme validation protects against malformed streams.
+- **Smart Caching**: Downloads the 30k master list once, caches it securely using atomic writes for 24 hours with age display and network failure fallback. A forced refresh never destroys a working cache.
+- **Robust URL Validation**: Scheme and hostname validation keeps `http`/`https` plus VLC-playable schemes (`rtsp`, `rtmp`, `udp`, `rtp`, `mms`) and rejects malformed entries.
 - **Force Refresh**: Bypass the cache with `--force-refresh`.
 - **Channel Count**: Shows how many channels were loaded after parsing.
 - **Download Timing**: Displays elapsed time for fresh downloads.
@@ -87,8 +87,8 @@ python iptv_search.py --query "Discovery" --force-refresh
 
 - **M3U Parsing**: Correctly parses `EXTINF` tags, even when channel names contain commas.
 - **Fuzzy Logic**: Utilizes `difflib.SequenceMatcher` with scoring bonuses for exact and substring matches.
-- **Smart Caching**: Caches the master M3U list to a system temp file using atomic writes for 24 hours. Displays cache age and timestamp when using cached data. Falls back to cache automatically on network failure.
-- **Force Refresh**: `--force-refresh` flag deletes the cache and downloads fresh data.
+- **Smart Caching**: Caches the master M3U list to a system temp file using atomic writes for 24 hours. Displays cache age and timestamp when using cached data. Falls back to cache automatically on network failure, including during a forced refresh.
+- **Force Refresh**: `--force-refresh` downloads fresh data while keeping the previous cache as a fallback.
 - **Download Timing**: Shows elapsed time for fresh downloads.
 - **Channel Count**: Displays total channels loaded after parsing.
 - **Network Timeout**: Configurable download timeout (default 60 seconds).
@@ -103,7 +103,7 @@ To allow the Python search engine to run interactively while communicating the s
 
 ### 4. Python Detection
 
-On Windows, the PowerShell launcher uses `Get-Command` with `--version` validation to reliably bypass the Microsoft Store Python stub that can interfere with Python detection.
+On Windows, both PowerShell and Batch launchers validate Python by actually running `--version` (via `Get-Command -CommandType Application` / `where`) to reliably bypass the Microsoft Store Python stub that can interfere with Python detection.
 
 ---
 

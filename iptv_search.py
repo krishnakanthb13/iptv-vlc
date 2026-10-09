@@ -13,7 +13,7 @@ MASTER_URL = "https://iptv-org.github.io/iptv/index.m3u"
 CACHE_FILE = os.path.join(tempfile.gettempdir(), "iptv_master_cache.m3u")
 CACHE_EXPIRY = 3600 * 24  # 24 hours
 DOWNLOAD_TIMEOUT = 60  # seconds
-SCRIPT_VERSION = "0.1.0"
+SCRIPT_VERSION = "0.1.3"
 
 def _read_cache():
     """Read and return lines from cache if it exists, else None."""
@@ -43,16 +43,17 @@ def _cache_timestamp():
 
 def download_m3u(force_refresh=False):
     """Downloads the master M3U list and caches it to disk for 24 hours."""
-    if force_refresh and os.path.exists(CACHE_FILE):
-        os.remove(CACHE_FILE)
-
     cache_age = _cache_age_hours()
-    if cache_age is not None and cache_age * 3600 < CACHE_EXPIRY:
-        lines = _read_cache()
-        if lines:
-            cache_time = _cache_timestamp()
-            print(f"[i] Using cached playlist ({cache_age}h old, from {cache_time})")
-            return lines
+    old_lines = _read_cache() if force_refresh else None
+
+    # If not forcing refresh and cache is valid, use it
+    if not force_refresh:
+        if cache_age is not None and cache_age * 3600 < CACHE_EXPIRY:
+            lines = _read_cache()
+            if lines:
+                cache_time = _cache_timestamp()
+                print(f"[i] Using cached playlist ({cache_age}h old, from {cache_time})")
+                return lines
 
     print("\n[!] Downloading master channel list (30,000+ channels)...")
     start_time = time.time()
@@ -69,6 +70,10 @@ def download_m3u(force_refresh=False):
         return content.splitlines(True)
     except Exception as e:
         print(f"X Download failed: {e}", flush=True)
+        # For forced refresh, try to restore old cache if download failed
+        if force_refresh and old_lines:
+            print("[!] Download failed - keeping existing cached playlist")
+            return old_lines
         if cache_age is not None:
             lines = _read_cache()
             if lines:
@@ -79,6 +84,7 @@ def download_m3u(force_refresh=False):
 
 def parse_m3u(lines):
     """Parses M3U lines into a list of dicts with 'name' and 'url'."""
+    VALID_SCHEMES = ("http", "https", "rtsp", "rtmp", "udp", "rtp", "mms")
     channels = []
     current_name = None
     for line in lines:
@@ -90,7 +96,7 @@ def parse_m3u(lines):
                 current_name = line[comma_idx + 1:].strip()
         elif current_name:
             parsed = urlparse(line)
-            if parsed.scheme in ("http", "https"):
+            if parsed.scheme.lower() in VALID_SCHEMES and parsed.netloc:
                 channels.append({"name": current_name, "url": line})
                 current_name = None
             elif not line or line.startswith("#"):
@@ -158,7 +164,7 @@ def main():
     args = parser.parse_args()
 
     # Validate threshold
-    if args.threshold < 0.1 or args.threshold > 1.0 or not (0.1 <= args.threshold <= 1.0):
+    if not (0.1 <= args.threshold <= 1.0):
         print("X Invalid threshold. Must be between 0.1 and 1.0.")
         sys.exit(1)
     if args.limit < 1:
@@ -171,7 +177,7 @@ def main():
             args.query = input("\nEnter channel name to search: ").strip()
         except (EOFError, KeyboardInterrupt):
             return
-    
+
     if not args.query:
         print("X No search query provided.")
         return
@@ -190,8 +196,8 @@ def main():
 
     if not matches:
         print(f"\n[!] No channels found matching '{args.query}' (sensitivity: {args.threshold})")
-        print("    Try lowering the sensitivity with -T in the launcher.")
-        sys.exit(1)
+        print("    Try lowering the sensitivity with T in the launcher.")
+        sys.exit(2)  # Exit code 2 indicates no results, not error
 
     print(f"\n--- Search Results (Top {len(matches)}) ---")
     for i, (score, ch) in enumerate(matches):

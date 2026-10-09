@@ -3,7 +3,7 @@
 
 # --- CONFIGURATION ---
 FUZZY_THRESHOLD=0.7
-SCRIPT_VERSION="0.1.0"
+SCRIPT_VERSION="0.1.3"
 # ---------------------
 
 # Detect VLC
@@ -30,15 +30,24 @@ if [ $# -gt 0 ]; then
         exit 1
     fi
     python_cmd=$(command -v python3 || command -v python)
+    if [ ! -f "$SEARCH_SCRIPT" ]; then
+        echo -e "\e[31mX iptv_search.py not found.\e[0m"
+        exit 1
+    fi
     result_file=$(mktemp)
     $python_cmd "$SEARCH_SCRIPT" --query "$query" --threshold "$FUZZY_THRESHOLD" --output-file "$result_file"
     py_exit=$?
     url=$(cat "$result_file" 2>/dev/null)
     rm -f "$result_file"
-    if [ -n "$url" ] && [ $py_exit -eq 0 ]; then
+    if [ -n "$url" ] && [ -n "$py_exit" ] && [ "$py_exit" -eq 0 ]; then
         "$VLC" "$url" &
+        exit 0
     fi
-    exit 0
+    # Exit code 2 means no results - don't treat as error
+    if [ "$py_exit" -eq 2 ]; then
+        exit 0
+    fi
+    exit $py_exit
 fi
 
 # URL Map (works on Bash 3.2+ without associative arrays)
@@ -165,7 +174,7 @@ while true; do
             fi
             ;;
         *)
-            url=$(get_url "$choice")
+            url=$(get_url "$choice_lc")
             if [ -n "$url" ]; then
                 echo -e "\e[32mLaunching VLC with selected stream...\e[0m"
                 "$VLC" "$url" &

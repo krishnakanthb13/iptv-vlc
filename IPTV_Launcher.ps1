@@ -5,7 +5,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 # --- CONFIGURATION ---
 $FuzzyThreshold = 0.7
-$ScriptVersion = "0.1.0"
+$ScriptVersion = "0.1.3"
 # ---------------------
 
 # Quick search: if a query was passed as argument, skip menu
@@ -18,7 +18,7 @@ if ($args.Count -gt 0) {
     # Detect Python properly (bypass MS Store stub)
     $pythonCmd = $null
     foreach ($cmd in "python3", "python") {
-        $found = Get-Command $cmd -ErrorAction SilentlyContinue
+        $found = Get-Command $cmd -CommandType Application -ErrorAction SilentlyContinue
         if ($found) {
             try { & $found.Source --version 2>$null; $code = $LASTEXITCODE } catch { $code = 1 }
             if ($code -eq 0) { $pythonCmd = $found; break }
@@ -27,18 +27,22 @@ if ($args.Count -gt 0) {
     if (-not $pythonCmd) { Write-Host "X Python not found." -ForegroundColor Red; exit 1 }
     $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
     $SearchScript = Join-Path $ScriptDir "iptv_search.py"
+    if (-not (Test-Path $SearchScript)) { Write-Host "X iptv_search.py not found." -ForegroundColor Red; exit 1 }
     $resultFile = [System.IO.Path]::GetTempFileName()
     $tString = $FuzzyThreshold.ToString([System.Globalization.CultureInfo]::InvariantCulture)
     try {
         & $pythonCmd.Source "$SearchScript" --query "$query" --threshold $tString --output-file "$resultFile"
         $pyExit = $LASTEXITCODE
-        if ($pyExit -eq 0 -and (Test-Path $resultFile)) {
+        if (Test-Path $resultFile) {
             $url = (Get-Content $resultFile -Raw)
             if ($url) { Start-Process -FilePath "$vlc" -ArgumentList "`"$($url.Trim())`"" }
         }
     } finally {
         if (Test-Path $resultFile) { Remove-Item $resultFile -ErrorAction SilentlyContinue }
     }
+    # Exit code 2 means "no matches" - treat as benign success
+    if ($pyExit -eq 2) { exit 0 }
+    if ($pyExit -ne 0) { exit $pyExit }
     exit 0
 }
 
@@ -92,7 +96,7 @@ function Invoke-Search {
     # This is the only way to bypass the dummy Microsoft Store aliases reliably
     $pythonCmd = $null
     foreach ($cmd in "python3", "python") {
-        $found = Get-Command $cmd -ErrorAction SilentlyContinue
+        $found = Get-Command $cmd -CommandType Application -ErrorAction SilentlyContinue
         if ($found) {
             try { & $found.Source --version 2>$null; $code = $LASTEXITCODE } catch { $code = 1 }
             if ($code -eq 0) {
@@ -122,8 +126,14 @@ function Invoke-Search {
         # Run Python interactively
         & $pythonCmd.Source "$SearchScript" --threshold $tString --output-file "$resultFile"
         
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "`n[!] Search engine closed or failed (Exit Code: $LASTEXITCODE)" -ForegroundColor Yellow
+        $pyExit = $LASTEXITCODE
+        if ($pyExit -ne 0 -and $pyExit -ne 2) {
+            Write-Host "`n[!] Search engine closed or failed (Exit Code: $pyExit)" -ForegroundColor Yellow
+            Start-Sleep -Seconds 2
+            return
+        }
+        if ($pyExit -eq 2) {
+            # No matches found - don't treat as failure
             Start-Sleep -Seconds 2
             return
         }
